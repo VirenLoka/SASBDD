@@ -41,7 +41,6 @@ from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
-import yaml
 from torch.utils.data import Dataset
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -69,9 +68,13 @@ LABEL_BUILDERS = ("sdf", "openbabel", "edm")
 # config helpers
 # -----------------------------------------------------------------------------
 
-def load_config(path: str | Path) -> dict:
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
+def load_config(path: str | Path, overrides=None):
+    """Delegates to the project-wide loader (common/config.py) so stage 1 and
+    stage 2 share one config system.  The returned ConfigNode supports both
+    dict-style and attribute access, so existing cfg["a"]["b"] usage is
+    unchanged."""
+    from common.config import load_config as _load
+    return _load(path, overrides or [])
 
 
 def resolve_path(p: str | Path) -> Path:
@@ -557,7 +560,7 @@ def collate_fn(batch: List[dict]) -> dict:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(description="Build the SA surrogate LMDB")
-    p.add_argument("--config", default=str(_REPO_ROOT / "sa_surrogate/configs/default.yaml"))
+    p.add_argument("--config", default=str(_REPO_ROOT / "configs/stage1_surrogate.yaml"))
     p.add_argument("--fixture", type=int, default=0,
                    help="build N synthetic molecules instead of reading CrossDocked")
     p.add_argument("--overwrite", action="store_true")

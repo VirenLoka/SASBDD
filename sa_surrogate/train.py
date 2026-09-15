@@ -392,29 +392,14 @@ def train(cfg: dict, args) -> Path:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(description="Train the SA surrogate")
-    p.add_argument("--config", default=str(_REPO_ROOT / "sa_surrogate/configs/default.yaml"))
+    p.add_argument("--config", default=str(_REPO_ROOT / "configs/stage1_surrogate.yaml"))
     p.add_argument("--override", nargs="*", default=[],
                    help="dotted config overrides, e.g. train.epochs=5 model.hidden_dim=64")
     args = p.parse_args(argv)
 
-    cfg = load_config(args.config)
-    for ov in args.override:
-        key, _, val = ov.partition("=")
-        node = cfg
-        parts = key.split(".")
-        for k in parts[:-1]:
-            node = node[k]
-        try:
-            node[parts[-1]] = yaml_scalar(val)
-        except Exception:
-            node[parts[-1]] = val
+    cfg = load_config(args.config, args.override)
     train(cfg, args)
     return 0
-
-
-def yaml_scalar(v: str):
-    import yaml
-    return yaml.safe_load(v)
 
 
 if __name__ == "__main__":

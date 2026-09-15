@@ -11,6 +11,7 @@ from openbabel import openbabel
 openbabel.obErrorLog.StopLogging()  # suppress OpenBabel messages
 
 import utils
+from common.config import add_config_args, apply_config_defaults, config_from_args
 from lightning_modules import LigandPocketDDPM
 from constants import FLOAT_TYPE, INT_TYPE
 from analysis.molecule_builder import build_molecule, process_molecule
@@ -192,6 +193,7 @@ def inpaint_ligand(model, pdb_file, n_samples, ligand, fix_atoms,
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
+    add_config_args(parser, default='inference.yaml')
     parser.add_argument('checkpoint', type=Path)
     parser.add_argument('--pdbfile', type=str)
     parser.add_argument('--ref_ligand', type=str, default=None)
@@ -206,6 +208,8 @@ if __name__ == "__main__":
     parser.add_argument('--timesteps', type=int, default=50)
     parser.add_argument('--save_traj', action='store_true')
     args = parser.parse_args()
+    args = apply_config_defaults(
+        args, config_from_args(args, 'inpaint'), parser=parser)
 
     pdb_id = Path(args.pdbfile).stem
 

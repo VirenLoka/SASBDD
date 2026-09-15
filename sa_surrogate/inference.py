@@ -120,6 +120,7 @@ class SASurrogate:
         tau: Optional[float] = None,
         hard: bool = True,
         deterministic: bool = False,
+        r_types: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Stage-2 hook.  `xh` is DiffSBDD's [N, n_dims + K] in normalised space.
 
@@ -131,7 +132,12 @@ class SASurrogate:
         `r` is the noise level of `xh`.  For a Tweedie estimate that is the
         denoiser's *residual* level, not the forward r(t) -- see
         `diffusion_bridge.tweedie_residual_r`, and calibrate it against the
-        pretrained checkpoint before relying on it.
+        pretrained checkpoint before relying on it (stage2/calibrate.py).
+
+        `r_types` optionally supplies a different level for the categorical
+        readout than for the model's sigma conditioning.  The denoiser's
+        residual error is not necessarily the same size on the coordinate and
+        type blocks, and calibration reports them separately.
         """
         if tau is None:
             tau = float(self.cfg["corruption"]["gumbel"]["tau"])
@@ -143,7 +149,8 @@ class SASurrogate:
         pos = xh[:, :n_dims] * self.x_scale
         h_norm = xh[:, n_dims:]
 
-        logprobs = categorical_logprobs_from_h(h_norm, r[batch].unsqueeze(-1),
+        rt = r if r_types is None else r_types.to(self.device)
+        logprobs = categorical_logprobs_from_h(h_norm, rt[batch].unsqueeze(-1),
                                                h_scale=self.h_scale)
         one_hot = gumbel_straight_through(logprobs, tau=tau, hard=hard,
                                           deterministic=deterministic)
@@ -235,7 +242,7 @@ def reference_sa(mols: Sequence[Chem.Mol], mode: str, builder: str = "sdf",
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(description="SA surrogate inference")
-    p.add_argument("--config", default=str(_REPO_ROOT / "sa_surrogate/configs/default.yaml"))
+    p.add_argument("--config", default=str(_REPO_ROOT / "configs/stage1_surrogate.yaml"))
     p.add_argument("--checkpoint", default=None)
     p.add_argument("--device", default=None)
     g = p.add_mutually_exclusive_group(required=True)

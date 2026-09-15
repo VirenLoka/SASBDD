@@ -10,6 +10,7 @@ from tqdm import tqdm
 from lightning_modules import LigandPocketDDPM
 from analysis.molecule_builder import process_molecule
 import utils
+from common.config import add_config_args, apply_config_defaults, config_from_args
 
 MAXITER = 10
 MAXNTRIES = 10
@@ -17,6 +18,7 @@ MAXNTRIES = 10
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    add_config_args(parser, default='inference.yaml')
     parser.add_argument('checkpoint', type=Path)
     parser.add_argument('--test_dir', type=Path)
     parser.add_argument('--test_list', type=Path, default=None)
@@ -34,6 +36,8 @@ if __name__ == "__main__":
     parser.add_argument('--n_nodes_min', type=int, default=0)
     parser.add_argument('--skip_existing', action='store_true')
     args = parser.parse_args()
+    args = apply_config_defaults(
+        args, config_from_args(args, 'test'), parser=parser)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 

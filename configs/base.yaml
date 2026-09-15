@@ -1,0 +1,48 @@
+# =============================================================================
+# Shared project configuration.  Every other config starts with
+#   defaults: [base.yaml]
+# and overrides what it needs.
+#
+# Constants here are pinned to the released DiffSBDD checkpoint
+# `crossdocked_fullatom_cond.ckpt`.  They are NOT silently propagated into the
+# surrogate: stage 2 validates the surrogate checkpoint's own constants against
+# the diffusion model's at load time (common/validate.py), which catches a
+# mismatch regardless of which file claimed what.
+# =============================================================================
+
+project:
+  name: diffsbdd-sa
+  seed: 42
+  device: auto            # auto | cpu | cuda | mps
+
+# Ligand atom vocabulary.  Must equal
+# constants.py: dataset_params['crossdock']['atom_encoder'].
+vocab:
+  name: crossdock
+  atom_encoder: {C: 0, N: 1, O: 2, S: 3, B: 4, Br: 5, Cl: 6, P: 7, I: 8, F: 9}
+
+# DiffSBDD's forward process.
+diffusion:
+  timesteps: 500
+  noise_schedule: polynomial_2
+  noise_precision: 5.0e-4
+  norm_values: [1.0, 4.0]   # [x, h]; h/4 means a clean one-hot sits at 0.25
+
+paths:
+  # Output of process_crossdock.py -- holds train/val/test.npz and
+  # size_distribution.npy.  Stage 2 needs this; the raw release is not enough.
+  processed_crossdock: null
+  crossdocked_raw: null
+  surrogate_lmdb: sa_surrogate/dataset/crossdock_sa.lmdb
+  surrogate_ckpt: sa_surrogate/checkpoints/sa_crossdock_gat/best.pt
+  diffsbdd_ckpt: null
+  logdir: runs
+
+logging:
+  logger: csv             # wandb | csv | tensorboard | none
+  log_every_n_steps: 50
+  wandb:
+    entity: null
+    project: diffsbdd-sa
+    group: null
+    mode: online          # online | offline | disabled

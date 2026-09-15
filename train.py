@@ -5,25 +5,11 @@ import warnings
 
 import torch
 import pytorch_lightning as pl
-import yaml
 import numpy as np
 
+from common.config import (add_config_args, load_config, merge_args_and_yaml,
+                           resolve_path, save_config)
 from lightning_modules import LigandPocketDDPM
-
-
-def merge_args_and_yaml(args, config_dict):
-    arg_dict = args.__dict__
-    for key, value in config_dict.items():
-        if key in arg_dict:
-            warnings.warn(f"Command line argument '{key}' (value: "
-                          f"{arg_dict[key]}) will be overwritten with value "
-                          f"{value} provided in the config file.")
-        if isinstance(value, dict):
-            arg_dict[key] = Namespace(**value)
-        else:
-            arg_dict[key] = value
-
-    return args
 
 
 def merge_configs(config, resume_config):
@@ -38,17 +24,56 @@ def merge_configs(config, resume_config):
     return config
 
 
+def build_logger(args, out_dir):
+    """Logger is configurable now: wandb is no longer a hard requirement.
+
+    Reads the `logging:` block if the config has one (configs/base.yaml), and
+    otherwise falls back to the original wandb behaviour so existing configs
+    keep working unchanged.
+    """
+    logging_cfg = getattr(args, 'logging', None)
+    kind = 'wandb'
+    if logging_cfg is not None:
+        kind = str(getattr(logging_cfg, 'logger', 'wandb')).lower()
+
+    if kind in ('none', 'false', ''):
+        return False
+    if kind == 'csv':
+        return pl.loggers.CSVLogger(save_dir=args.logdir, name=args.run_name)
+    if kind == 'tensorboard':
+        return pl.loggers.TensorBoardLogger(save_dir=args.logdir,
+                                            name=args.run_name)
+
+    wandb_params = getattr(args, 'wandb_params', None)
+    if logging_cfg is not None and hasattr(logging_cfg, 'wandb') and wandb_params is None:
+        wandb_params = logging_cfg.wandb
+    return pl.loggers.WandbLogger(
+        save_dir=args.logdir,
+        project=getattr(wandb_params, 'project', 'ligand-pocket-ddpm'),
+        group=getattr(wandb_params, 'group', None),
+        name=args.run_name,
+        id=args.run_name,
+        resume='must' if args.resume is not None else False,
+        entity=getattr(wandb_params, 'entity', None),
+        mode=getattr(wandb_params, 'mode', 'online'),
+    )
+
+
 # ------------------------------------------------------------------------------
 # Training
 # ______________________________________________________________________________
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument('--config', type=str, required=True)
+    add_config_args(p)
     p.add_argument('--resume', type=str, default=None)
     args = p.parse_args()
+    if args.config is None:
+        p.error('--config is required')
 
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
+    # Project-wide loader: supports `defaults:` inheritance and dotted
+    # --override, and still reads the original flat configs unchanged.
+    config = load_config(args.config, args.override).to_dict()
+    config.pop('diffsbdd', None)   # legacy configs are mirrored there; not a kwarg
 
     assert 'resume' not in config
 
@@ -63,7 +88,7 @@ if __name__ == "__main__":
     args = merge_args_and_yaml(args, config)
 
     out_dir = Path(args.logdir, args.run_name)
-    histogram_file = Path(args.datadir, 'size_distribution.npy')
+    histogram_file = Path(resolve_path(args.datadir), 'size_distribution.npy')
     histogram = np.load(histogram_file).tolist()
     pl_module = LigandPocketDDPM(
         outdir=out_dir,
@@ -89,16 +114,10 @@ if __name__ == "__main__":
         virtual_nodes=args.virtual_nodes
     )
 
-    logger = pl.loggers.WandbLogger(
-        save_dir=args.logdir,
-        project='ligand-pocket-ddpm',
-        group=args.wandb_params.group,
-        name=args.run_name,
-        id=args.run_name,
-        resume='must' if args.resume is not None else False,
-        entity=args.wandb_params.entity,
-        mode=args.wandb_params.mode,
-    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    save_config(config, Path(out_dir, 'config.resolved.yaml'))
+
+    logger = build_logger(args, out_dir)
 
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         dirpath=Path(out_dir, 'checkpoints'),
@@ -109,14 +128,18 @@ if __name__ == "__main__":
         mode="min",
     )
 
+    gpus = getattr(args, 'gpus', 1)
+    accelerator = getattr(args, 'accelerator', None) or (
+        'gpu' if torch.cuda.is_available() else 'auto')
+
     trainer = pl.Trainer(
         max_epochs=args.n_epochs,
         logger=logger,
         callbacks=[checkpoint_callback],
         enable_progress_bar=args.enable_progress_bar,
         num_sanity_val_steps=args.num_sanity_val_steps,
-        accelerator='gpu', devices=args.gpus,
-        strategy=('ddp' if args.gpus > 1 else None)
+        accelerator=accelerator, devices=gpus,
+        strategy=('ddp' if gpus > 1 else None)
     )
 
     trainer.fit(model=pl_module, ckpt_path=ckpt_path)

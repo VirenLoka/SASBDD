@@ -1,0 +1,86 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# ─── Virtual environments & conda ────────────────────────────────────────────
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.conda
+*.tar.bz2
+
+# ─── Jupyter / Colab ──────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ─── PyTorch / Training artefacts ────────────────────────────────────────────
+*.ckpt
+*.pt
+*.pth
+runs/
+lightning_logs/
+wandb/
+mlruns/
+
+# ─── Data files (large / generated) ──────────────────────────────────────────
+*.lmdb
+*.lmdb-lock
+*.sdf
+*.mol2
+*.pdb
+*.xyz
+*.npy
+*.npz
+data/crossdocked_pocket10/
+data/bindingmoad/
+data/processed*/
+*.hdf5
+*.h5
+*.pkl
+*.pickle
+
+# ─── Logs & experiment outputs ────────────────────────────────────────────────
+*.log
+logs/
+outputs/
+results/
+generated_ligands/
+
+# ─── Config secrets / local overrides ────────────────────────────────────────
+configs/local.yaml
+configs/local.yml
+.env.local
+secrets.yaml
+
+# ─── OS / Editor ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ─── C extensions / compiled ─────────────────────────────────────────────────
+*.so
+*.dylib
+*.dll
+*.o
+*.a
+
+# ─── Documentation build ──────────────────────────────────────────────────────
+docs/_build/
+site/

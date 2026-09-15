@@ -1,0 +1,44 @@
+# DiffSBDD Requirements
+# Python 3.10.4 recommended (matches environment.yaml)
+# Install via conda first for GPU/CUDA packages, then pip for the rest.
+#
+# Recommended setup:
+#   conda env create -f environment.yaml
+#   conda activate diffsbdd
+#   pip install -r requirements.txt
+
+# ── Core Deep Learning ────────────────────────────────────────────────────────
+torch==2.0.1           # CUDA 11.8 wheel; install via conda (see environment.yaml)
+pytorch-lightning==1.8.4
+torchmetrics==1.4.2
+
+# ── PyTorch Geometric ecosystem ───────────────────────────────────────────────
+torch-scatter==2.1.2   # install via conda channel pyg or pip with matching torch/cuda
+torch-geometric        # TransformerConv used in sa_surrogate/model.py
+
+# ── Chemistry / Bioinformatics ────────────────────────────────────────────────
+rdkit==2022.03.2       # install via conda; rdkit is not on PyPI officially
+biopython==1.79
+openbabel==3.1.1       # install via conda; Python bindings bundled
+
+# ── Scientific Computing ──────────────────────────────────────────────────────
+numpy==1.26.4
+scipy==1.13.1
+networkx==3.3
+pandas==2.2.2
+
+# ── Experiment Tracking ───────────────────────────────────────────────────────
+wandb==0.13.1
+
+# ── Visualisation ─────────────────────────────────────────────────────────────
+matplotlib
+seaborn==0.13.2
+imageio==2.21.2
+
+# ── Data Storage ─────────────────────────────────────────────────────────────
+lmdb                   # used in sa_surrogate/dataset.py for molecule LMDB store
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+tqdm==4.66.5
+pyyaml==6.0.1          # yaml package maps to pyyaml on PyPI
+protobuf>=3.20,<4.0

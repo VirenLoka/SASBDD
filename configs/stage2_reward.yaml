@@ -1,0 +1,92 @@
+defaults: [base.yaml]
+
+# =============================================================================
+# Stage 2 -- SA-guided finetuning of DiffSBDD.
+#
+# Per optimiser step:
+#   1. DDPM loss on real data at t ~ U[0, T]                (unchanged)
+#   2. reward pass at t ~ U[reward.t_min, reward.t_max]     (low t only)
+#      -> Tweedie x0_hat -> box-integral -> Gumbel-ST -> frozen surrogate
+#   3. anchor ||eps_theta - eps_frozen||^2 at the reward pass's own z_t
+#   4. separate backwards, budget the aux gradient, sum, clip, step
+#
+# Architecture hyperparameters are read from `base_checkpoint`, so they cannot
+# drift out of sync with the weights being finetuned.  Anything set under
+# `diffsbdd:` here overrides what the checkpoint says.
+# =============================================================================
+
+run_name: sa-guided-cond-full
+
+# Pretrained DiffSBDD checkpoint to finetune (required).
+base_checkpoint: null
+
+diffsbdd:
+  datadir: null             # null -> paths.processed_crossdock
+  batch_size: 8
+  lr: 1.0e-5                # finetuning; pretraining used 1e-3
+  num_workers: 0
+  clip_grad: true
+  auxiliary_loss: false     # the LJ aux term; independent of the SA reward
+  eval_epochs: 5
+  visualize_sample_epoch: 1000000     # visualisation off during finetuning
+  visualize_chain_epoch: 1000000
+  eval_params:
+    n_eval_samples: 100
+    eval_batch_size: 32
+    smiles_file: null
+    n_visualize_samples: 0
+    keep_frames: 0
+
+surrogate:
+  checkpoint: null          # null -> paths.surrogate_ckpt
+  # x0_hat is sharper than a rescaled z_t because the denoiser removes most of
+  # the error; this is the fraction it fails to remove.  CALIBRATE THIS: measure
+  # ||x0_hat - x0|| / r on held-out data with the pretrained checkpoint
+  # (stage2/calibrate.py) before trusting the default.
+  residual_scale: 0.3
+  tau: null                 # null -> the tau the surrogate was trained with
+  hard: true                # straight-through: hard forward, soft backward
+  deterministic: false      # true drops Gumbel noise (argmax); lower variance
+  strict_validation: true   # fail loudly on vocab / schedule mismatch
+
+reward:
+  weight: 0.01
+  warmup_steps: 500         # ramp in, so the gradient-norm distribution does
+  start_step: 0             # not shift abruptly under the clipping queue
+  # Atom types are near-uniform past t ~ 75 of 500 (p(correct) 1.00 @ t=10 ->
+  # 0.27 @ t=50 -> 0.14 @ t=100), so the Gumbel-ST path carries signal only at
+  # the clean end.  Coordinates survive to t ~ 150-200; raise t_max if you
+  # weight coordinates far above types.
+  t_min: 0
+  t_max: 75
+  # Cap the reward gradient at this fraction of the DDPM gradient norm.
+  grad_budget: 0.2
+  # Backstop for the adaptive-clipping ratchet.  CALIBRATE: watch
+  # sa/grad_total for the first few hundred steps and set ~3-5x typical.
+  grad_clip_ceiling: 1000.0
+  # ||g_types||/||g_coords|| is structurally ~100-1000x, so equalise the two
+  # blocks and then apply these weights as a ratio.
+  channel_balance: normalize      # none | normalize | manual
+  coord_weight: 1.0
+  type_weight: 1.0
+  # The reward-hacking detector: sample molecules, compare the surrogate's
+  # score against RDKit's true SA.  pred improving while true does not means
+  # the model is fooling the surrogate.
+  eval_sa_epochs: 5
+  eval_sa_samples: 100
+
+anchor:
+  enabled: true
+  weight: 1.0
+
+trainer:
+  max_epochs: 50
+  accelerator: auto         # auto | cpu | gpu
+  devices: 1
+  accumulate_grad_batches: 1
+  num_sanity_val_steps: 0
+  enable_progress_bar: true
+  save_top_k: 3
+  val_check_interval: 1.0
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0

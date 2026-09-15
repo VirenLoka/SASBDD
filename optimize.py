@@ -13,6 +13,7 @@ from openbabel import openbabel
 openbabel.obErrorLog.StopLogging()  # suppress OpenBabel messages
 
 import utils
+from common.config import add_config_args, apply_config_defaults, config_from_args
 from lightning_modules import LigandPocketDDPM
 from constants import FLOAT_TYPE, INT_TYPE
 from analysis.molecule_builder import build_molecule, process_molecule
@@ -150,6 +151,7 @@ def diversify_ligands(model, pocket, mols, timesteps,
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
+    add_config_args(parser, default='inference.yaml')
     parser.add_argument('--checkpoint', type=Path, default='checkpoints/crossdocked_fullatom_cond.ckpt')
     parser.add_argument('--pdbfile', type=str, default='example/5ndu.pdb')
     parser.add_argument('--ref_ligand', type=str, default='example/5ndu_linked_mols.sdf')
@@ -163,6 +165,8 @@ if __name__ == "__main__":
 
 
     args = parser.parse_args()
+    args = apply_config_defaults(
+        args, config_from_args(args, 'optimize'), parser=parser)
 
     pdb_id = Path(args.pdbfile).stem
 

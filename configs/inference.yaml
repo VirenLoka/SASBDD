@@ -1,0 +1,64 @@
+defaults: [base.yaml]
+
+# =============================================================================
+# Defaults for DiffSBDD's inference entry points.
+#
+# Every value starts as null, which means "leave the script's own default
+# alone" -- so adding --config changes nothing until you fill something in.
+# Precedence: flags you type > positionals you supply > this file > the
+# script's argparse defaults.
+#
+#   python generate_ligands.py CKPT --pdbfile x.pdb   # config supplies the rest
+# =============================================================================
+
+generate:            # generate_ligands.py
+  outfile: null
+  n_samples: null
+  batch_size: null
+  num_nodes_lig: null
+  all_frags: null
+  sanitize: null
+  relax: null
+  resamplings: null
+  jump_length: null
+  timesteps: null
+
+test:                # test.py
+  test_dir: null
+  test_list: null
+  outdir: null
+  n_samples: null
+  batch_size: null
+  all_frags: null
+  sanitize: null
+  relax: null
+  resamplings: null
+  jump_length: null
+  timesteps: null
+  fix_n_nodes: null
+  n_nodes_bias: null
+  n_nodes_min: null
+  skip_existing: null
+
+inpaint:             # inpaint.py
+  outfile: null
+  n_samples: null
+  add_n_nodes: null
+  center: null
+  relax: null
+  sanitize: null
+  resamplings: null
+  timesteps: null
+  save_traj: null
+
+optimize:            # optimize.py (the existing evolutionary optimiser)
+  checkpoint: null
+  pdbfile: null
+  ref_ligand: null
+  objective: null    # qed | sa
+  timesteps: null
+  population_size: null
+  evolution_steps: null
+  top_k: null
+  outfile: null
+  relax: null

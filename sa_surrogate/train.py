@@ -328,7 +328,7 @@ def train(cfg: dict, args) -> Path:
             if ema:
                 ema.update(model)
 
-            running += float(loss)
+            running += loss.item()
             nb += 1
             step += 1
             if step % int(tcfg["log_every"]) == 0:

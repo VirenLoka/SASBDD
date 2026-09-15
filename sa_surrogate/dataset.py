@@ -503,8 +503,15 @@ class SALMDBDataset(Dataset):
     def _ensure_env(self):
         if self._env is None:
             import lmdb
-            self._env = lmdb.open(self.lmdb_path, subdir=True, readonly=True,
-                                  lock=False, readahead=False, max_readers=512)
+            import os
+            key = (self.lmdb_path, os.getpid())
+            global _LMDB_ENVS
+            if "_LMDB_ENVS" not in globals():
+                _LMDB_ENVS = {}
+            if key not in _LMDB_ENVS:
+                _LMDB_ENVS[key] = lmdb.open(self.lmdb_path, subdir=True, readonly=True,
+                                            lock=False, readahead=False, max_readers=512)
+            self._env = _LMDB_ENVS[key]
         return self._env
 
     def __len__(self) -> int:

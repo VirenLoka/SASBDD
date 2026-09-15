@@ -51,7 +51,9 @@ if __name__ == "__main__":
         num_nodes_lig = None
 
     molecules = []
-    for i in range(args.n_samples // args.batch_size):
+    from tqdm import tqdm
+    n_batches = args.n_samples // args.batch_size
+    for i in tqdm(range(n_batches), desc="Generating ligands"):
         molecules_batch = model.generate_ligands(
             args.pdbfile, args.batch_size, args.resi_list, args.ref_ligand,
             num_nodes_lig, args.sanitize, largest_frag=not args.all_frags,

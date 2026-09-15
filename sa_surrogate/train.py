@@ -30,6 +30,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -229,7 +230,7 @@ def evaluate(model, loader, schedule, cfg, device, dataset, t_buckets) -> Dict[s
     for t in t_buckets:
         preds, trues = [], []
         gen = torch.Generator(device=device).manual_seed(1234 + int(t))
-        for batch in loader:
+        for batch in tqdm(loader, desc=f"Eval t={t}", leave=False):
             pos, one_hot, r = _corrupt_batch(batch, schedule, cfg["corruption"],
                                              device, t=t, generator=gen,
                                              deterministic=True)
@@ -314,7 +315,7 @@ def train(cfg: dict, args) -> Path:
     for epoch in range(1, int(tcfg["epochs"]) + 1):
         model.train()
         running, nb, t0 = 0.0, 0, time.time()
-        for batch in train_dl:
+        for batch in tqdm(train_dl, desc=f"Epoch {epoch}", leave=False):
             pos, one_hot, r = _corrupt_batch(batch, schedule, ccfg, device)
             out = model(one_hot, pos, batch["batch"].to(device), r)
             loss = compute_loss(out, batch["y"].to(device), cfg, bin_edges)

@@ -8,6 +8,7 @@ from Bio.PDB import PDBParser
 from rdkit import Chem
 import pandas as pd
 import random
+from tqdm import tqdm
 from torch_scatter import scatter_mean
 from openbabel import openbabel
 openbabel.obErrorLog.StopLogging()  # suppress OpenBabel messages
@@ -208,7 +209,7 @@ if __name__ == "__main__":
                             'fate': 'initial', 'mol': ref_mol,
                             'smiles': Chem.MolToSmiles(ref_mol)}, ignore_index=True)
 
-    for generation_idx in range(evolution_steps):
+    for generation_idx in tqdm(range(evolution_steps), desc="Evolution"):
 
         if generation_idx == 0:
             molecules = buffer['mol'].tolist() * population_size
@@ -238,7 +239,7 @@ if __name__ == "__main__":
         
         
         # Evaluate and save molecules
-        for mol in molecules:
+        for mol in tqdm(molecules, desc=f"Gen {generation_idx+1} eval", leave=False):
             buffer = buffer.append({'generation': generation_idx + 1,
             'score': objective_function(mol),
             'fate': 'purged',

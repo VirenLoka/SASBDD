@@ -1,0 +1,143 @@
+# =============================================================================
+# SA surrogate  --  stage 1 of SA-guided DiffSBDD
+#
+# Trains a sigma-conditioned graph attention transformer to predict the
+# synthetic-accessibility score of a ligand from (one-hot atom types, 3D
+# coordinates), at every noise level of DiffSBDD's forward diffusion process.
+#
+# Every constant in `corruption` is pinned to the released DiffSBDD checkpoint
+# `crossdocked_fullatom_cond.ckpt` (diffusion_steps=500, polynomial_2,
+# precision=5e-4, normalize_factors=[1, 4]).  If you retrain DiffSBDD with a
+# different schedule, these must be updated to match or stage 2 will feed the
+# surrogate inputs it was never calibrated on.
+# =============================================================================
+
+run_name: sa_crossdock_gat
+seed: 42
+device: auto              # auto | cpu | cuda | mps
+
+# ------------------------------------------------------------------ vocabulary
+# Must stay byte-identical to DiffSBDD's `crossdock` ligand encoder, see
+# constants.py:169  dataset_params['crossdock']['atom_encoder'].
+# Heavy atoms only -- DiffSBDD strips hydrogens at preprocessing.
+vocab:
+  name: crossdock
+  atom_encoder: {C: 0, N: 1, O: 2, S: 3, B: 4, Br: 5, Cl: 6, P: 7, I: 8, F: 9}
+
+# ------------------------------------------------------------------------ data
+data:
+  # Root of the CrossDocked2020 pocket10 release: the directory that contains
+  # `crossdocked_pocket10/` and `split_by_name.pt`.  Leave null to build from
+  # the synthetic smoke-test fixture instead (see dataset.py --fixture).
+  crossdocked_dir: null
+  lmdb_path: sa_surrogate/dataset/crossdock_sa.lmdb
+
+  # How the SA label is produced from each ligand.
+  #   openbabel : SA(build_molecule(coords, types, use_openbabel=True))
+  #               -- matches the reward actually measured at stage 2.
+  #   edm       : SA(make_mol_edm(...))  distance cutoffs, no OpenBabel.
+  #   sdf       : SA of the original SDF molecule (true bonds).
+  # All three are computed and stored at build time; this selects the training
+  # target.  See README for the measured disagreement between them.
+  label_builder: openbabel
+  store_all_labels: true
+
+  dedup_by_smiles: true     # CrossDocked docks the same ligand into many pockets
+  split_by_smiles: true     # otherwise the same molecule lands in train and val
+  val_fraction: 0.05        # carved out of the official train split
+  split_seed: 0
+  max_molecules: null       # cap for quick experiments
+  min_atoms: 4
+  max_atoms: 106            # len(node_histogram) - 1 in the released checkpoint
+  map_size_gb: 16
+  write_batch: 2048
+  build_workers: 4
+
+# ---------------------------------------------------------------------- target
+target:
+  mode: raw_sa              # raw_sa (1..10, lower = easier) | pocket2mol ((10-sa)/9)
+  normalize: true           # z-score using train-split statistics stored in LMDB
+
+# ------------------------------------------------------------------ corruption
+# Stage 1 uses plain forward noising, NOT a simulated Tweedie estimate: there is
+# no denoiser to Tweedie with yet.  Corruption lives in x0-space so the model is
+# calibrated on whatever stage 2 hands it (z_t rescaled, or Tweedie's x0-hat).
+#
+#     x~ = x0        + r * eps_x           r(t) = sigma_t / alpha_t
+#     h~ = onehot/4  + r * eps_h           then box-integral -> Gumbel-ST
+#
+# The model is conditioned on log10(r), not on t, so it transfers across
+# schedules and across which estimate stage 2 feeds it.
+corruption:
+  enabled: true
+  timesteps: 500
+  noise_schedule: polynomial_2
+  noise_precision: 5.0e-4
+  norm_values: [1.0, 4.0]   # [x, h] -- DiffSBDD's normalize_factors
+
+  # Measured decoherence for this schedule (see README):
+  #   types   are ~uniform past t ~ 75   (p(correct) 1.00 @ t=10 -> 0.27 @ t=50)
+  #   coords  survive to  t ~ 150-200    (0.46-0.65 A of noise)
+  # Training past t_max only teaches the model the marginal mean, so we stop there.
+  t_min: 0
+  t_max: 200
+  sampling: log_uniform_sigma   # log_uniform_sigma | uniform_t
+  clean_fraction: 0.15          # fraction of each batch left uncorrupted
+  corrupt_types: true
+  corrupt_coords: true
+  gumbel:
+    tau: 1.0
+    hard: true                  # straight-through: hard forward, soft backward
+
+# ----------------------------------------------------------------------- model
+model:
+  hidden_dim: 256
+  num_layers: 6
+  num_heads: 8
+  dropout: 0.1
+  ffn_mult: 2
+
+  # Graph construction.  Edges come from interatomic distances, never from RDKit
+  # bonds -- at stage 2 there is no bond graph, only coordinates.
+  edge_cutoff: 5.0
+  max_neighbors: 32
+  num_rbf: 32
+  envelope: true            # smooth cosine cutoff; a hard cutoff puts a
+                            # discontinuity in d(score)/d(coords) at stage 2
+
+  condition_on_sigma: true
+  sigma_embed_dim: 128
+
+  pool: [sum, mean, attn]   # sum matters: SA's size penalty is extensive
+  head_hidden: 256
+  head: regression          # regression | classification
+  num_bins: 10              # classification head / auxiliary head only
+  aux_classification:
+    enabled: false
+    weight: 0.2
+
+# ----------------------------------------------------------------------- train
+train:
+  batch_size: 64
+  epochs: 60
+  lr: 3.0e-4
+  weight_decay: 1.0e-2
+  warmup_steps: 500
+  scheduler: cosine         # cosine | none
+  grad_clip: 5.0
+  loss: huber               # huber | mse
+  huber_beta: 1.0
+  num_workers: 0
+  ema_decay: 0.999
+  val_every: 1
+  log_every: 50
+  ckpt_dir: sa_surrogate/checkpoints
+  early_stop_patience: 15
+  # Validation is reported per noise level -- the numbers at low t are the ones
+  # that predict whether stage-2 guidance will carry signal.
+  eval_t_buckets: [0, 10, 25, 50, 75, 100, 150, 200]
+
+# ------------------------------------------------------------------- inference
+inference:
+  checkpoint: sa_surrogate/checkpoints/sa_crossdock_gat/best.pt
+  batch_size: 128

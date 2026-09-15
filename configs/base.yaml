@@ -33,6 +33,9 @@ paths:
   # size_distribution.npy.  Stage 2 needs this; the raw release is not enough.
   processed_crossdock: null
   crossdocked_raw: null
+  # TargetDiff / Pocket2Mol preprocessed release
+  crossdocked_lmdb: null
+  crossdocked_pose_split: null
   surrogate_lmdb: sa_surrogate/dataset/crossdock_sa.lmdb
   surrogate_ckpt: sa_surrogate/checkpoints/sa_crossdock_gat/best.pt
   diffsbdd_ckpt: null

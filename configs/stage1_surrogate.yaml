@@ -28,6 +28,17 @@ vocab:
 
 # ------------------------------------------------------------------------ data
 data:
+  # Where ligands come from:
+  #   crossdocked_raw  the CrossDocked2020 pocket10 release (SDF files)
+  #   targetdiff_lmdb  crossdocked_v1.1_rmsd1.0_pocket10_processed_final.lmdb
+  #                    -- stores real bond graphs, so SA labels are exact and
+  #                    the training distribution matches what stage 2 will show
+  #                    the surrogate.  Set source_lmdb / source_split.
+  source: crossdocked_raw
+  source_lmdb: null
+  source_split: null
+  field_map: {}
+
   # Root of the CrossDocked2020 pocket10 release: the directory that contains
   # `crossdocked_pocket10/` and `split_by_name.pt`.  Leave null to build from
   # the synthetic smoke-test fixture instead (see dataset.py --fixture).

@@ -80,6 +80,18 @@ onto the iodine or boron column. The vocabulary here is asserted equal to
 `dataset_params['crossdock']['atom_encoder']` at build time and the build fails
 loudly if it ever drifts.
 
+### 1b. Ligands can come from the TargetDiff LMDB, with exact bonds
+
+`data.source: targetdiff_lmdb` reads ligands from
+`crossdocked_v1.1_rmsd1.0_pocket10_processed_final.lmdb` instead of the raw SDF
+release. That record stores each ligand's real bond graph, so molecules are
+rebuilt with their true bonds and orders — no geometric perception at all — and
+the surrogate trains on precisely the ligand distribution stage 2 will show it.
+
+With exact bonds the `sdf` and `openbabel` labels become *identical* (measured:
+both 1.954 ± 0.514 over the same molecules), while `edm` stays +1.63 off. Set
+`data.source_lmdb` and `data.source_split`; the default source is unchanged.
+
 ### 2. SA labels come from OpenBabel reconstruction
 
 At stage 2 the reward you actually measure is `SA(build_molecule(x, h))`, which

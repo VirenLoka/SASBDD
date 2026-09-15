@@ -9,6 +9,11 @@ import numpy as np
 
 from common.config import (add_config_args, load_config, merge_args_and_yaml,
                            resolve_path, save_config)
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
+from common.compat import ensure_dependencies as _ensure_deps
+_ensure_deps(verbose=False)   # must precede lightning_modules (imports wandb)
+
 from lightning_modules import LigandPocketDDPM
 
 

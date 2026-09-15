@@ -243,6 +243,8 @@ def reference_sa(mols: Sequence[Chem.Mol], mode: str, builder: str = "sdf",
 def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(description="SA surrogate inference")
     p.add_argument("--config", default=str(_REPO_ROOT / "configs/stage1_surrogate.yaml"))
+    p.add_argument("--override", nargs="*", default=[], metavar="KEY=VALUE",
+                   help="dotted config overrides, e.g. data.source=targetdiff_lmdb")
     p.add_argument("--checkpoint", default=None)
     p.add_argument("--device", default=None)
     g = p.add_mutually_exclusive_group(required=True)
@@ -254,7 +256,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                    help="also report the true RDKit SA and the surrogate's error")
     args = p.parse_args(argv)
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, args.override)
     ckpt = args.checkpoint or cfg["inference"]["checkpoint"]
     sur = SASurrogate(ckpt, device=args.device or cfg.get("device", "auto"))
     mode = sur.target["mode"]

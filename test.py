@@ -7,6 +7,11 @@ import torch
 from rdkit import Chem
 from tqdm import tqdm
 
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
+from common.compat import ensure_dependencies as _ensure_deps
+_ensure_deps(verbose=False)   # must precede lightning_modules (imports wandb)
+
 from lightning_modules import LigandPocketDDPM
 from analysis.molecule_builder import process_molecule
 import utils

@@ -20,8 +20,37 @@ run_name: sa-guided-cond-full
 # Pretrained DiffSBDD checkpoint to finetune (required).
 base_checkpoint: null
 
+# Which CrossDocked artefact to train on.
+#   npz             process_crossdock.py output (train/val/test.npz)
+#   targetdiff_lmdb the TargetDiff / Pocket2Mol release:
+#                     crossdocked_v1.1_rmsd1.0_pocket10_processed_final.lmdb
+#                     crossdocked_pocket10_pose_split.pt
+# Inspect an LMDB's real schema with:
+#   python stage2/crossdocked_lmdb.py <lmdb> --split <split.pt>
+data:
+  source: npz
+  lmdb_path: null
+  split_path: null
+  raw_dir: null             # null -> paths.crossdocked_raw (only for docking eval)
+
+  # The LMDB stores 10 A pockets; the pretrained checkpoint was trained on 8 A.
+  # Re-cropping keeps the input distribution matched to the weights being
+  # finetuned.  Residue-level when residues can be recovered from atom names
+  # (matching process_crossdock.py:51-58), atom-level otherwise.  null = no crop.
+  pocket_cutoff: 8.0
+  center: true
+
+  # The pose split has train/test only; a validation set is carved out of train
+  # by index, with no overlap.
+  val_size: 300
+  split_seed: 0
+
+  max_ligand_atoms: null    # null -> no cap
+  field_map: {}             # override auto-detected field names if a fork renames them
+  docking_eval: false       # smina scoring during eval; needs smina + receptor PDBs
+
 diffsbdd:
-  datadir: null             # null -> paths.processed_crossdock
+  datadir: null             # null -> paths.processed_crossdock (npz source only)
   batch_size: 8
   lr: 1.0e-5                # finetuning; pretraining used 1e-3
   num_workers: 0

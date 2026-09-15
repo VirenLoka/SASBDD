@@ -6,12 +6,17 @@ import torch
 import torch.nn.functional as F
 from Bio.PDB import PDBParser
 from rdkit import Chem
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
+from common.compat import ensure_dependencies as _ensure_deps
+_ensure_deps(verbose=False)   # must precede torch_scatter / wandb imports
 from torch_scatter import scatter_mean
 from openbabel import openbabel
 openbabel.obErrorLog.StopLogging()  # suppress OpenBabel messages
 
 import utils
 from common.config import add_config_args, apply_config_defaults, config_from_args
+
 from lightning_modules import LigandPocketDDPM
 from constants import FLOAT_TYPE, INT_TYPE
 from analysis.molecule_builder import build_molecule, process_molecule

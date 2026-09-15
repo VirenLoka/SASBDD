@@ -52,7 +52,54 @@ gradient path:
 python stage2/make_fixture.py && python stage2/train.py --steps 4 --override base_checkpoint=/path/to/ckpt paths.processed_crossdock=stage2/fixture_data logging.logger=none
 ```
 
-**Stage 2 needs the processed `.npz` files**, not the raw release:
+### Data sources
+
+Two are supported, selected by `data.source`:
+
+| `data.source` | artefact |
+|---|---|
+| `npz` (default) | `process_crossdock.py` output — `{train,val,test}.npz` + `size_distribution.npy` |
+| `targetdiff_lmdb` | `crossdocked_v1.1_rmsd1.0_pocket10_processed_final.lmdb` + `crossdocked_pocket10_pose_split.pt` |
+
+```bash
+python stage2/train.py --override   data.source=targetdiff_lmdb   data.lmdb_path=/path/to/crossdocked_v1.1_rmsd1.0_pocket10_processed_final.lmdb   data.split_path=/path/to/crossdocked_pocket10_pose_split.pt   base_checkpoint=/path/to/crossdocked_fullatom_cond.ckpt
+```
+
+Check what a record actually contains before a long run:
+
+```bash
+python stage2/crossdocked_lmdb.py <lmdb> --split <pose_split.pt>
+```
+
+Four things the LMDB path handles that are easy to get wrong:
+
+- **The pickles reference classes this repo does not have.** TargetDiff stores
+  `ProteinLigandData` from its own `utils.data`; DiffSBDD has a *different*
+  top-level `utils`, so a naive `pickle.loads` resolves to the wrong module and
+  fails confusingly. A permissive unpickler substitutes an attribute-bag for any
+  class it cannot import.
+- **Keys are unpadded `str(i)`, so cursor order is lexicographic**: `0, 1, 10,
+  11, …`. Taking keys in cursor order would silently map split index 2 to record
+  `"10"`. Keys are sorted numerically.
+- **Pockets are 10 Å; the pretrained checkpoint saw 8 Å.** `data.pocket_cutoff`
+  (default 8.0) re-crops, residue-level where residues can be recovered from
+  atom names — matching `process_crossdock.py:51-58` — and atom-level otherwise.
+  Measured on fixture data: no crop → 175 atoms/pocket, 10 Å → 105, 8 Å → 89,
+  6 Å → 62.
+- **The pose split has no validation set.** One is carved out of train by index
+  and removed from it (`data.val_size`, default 300), so unlike the leak
+  acknowledged in `process_crossdock.py:290` there is no train/val overlap.
+
+Encoding reproduces `process_crossdock.py` exactly, quirks included: hydrogens
+dropped, ligands with out-of-vocabulary elements dropped, and unknown non-H
+pocket atoms given an all-zero row (upstream's `np.eye(1, K, K)` is out of range
+and yields zeros rather than a one-hot).
+
+Docking during eval is off by default (`data.docking_eval`) — the parent's
+`analyze_sample` docks whenever receptors are passed, which needs smina plus
+receptor PDBs on disk, neither implied by having the LMDB.
+
+**The `npz` source needs the processed files**, not the raw release:
 `LigandPocketDDPM.setup()` reads `{train,val,test}.npz` and
 `size_distribution.npy` from `datadir`, which is what `process_crossdock.py`
 produces (`python process_crossdock.py <basedir> --no_H`).

@@ -308,7 +308,32 @@ def build_lmdb(cfg: dict, fixture: int = 0, overwrite: bool = False) -> Path:
 
     # ---- gather source molecules, tagged with their official split ----------
     sources: List[Tuple[str, str, Chem.Mol]] = []  # (official_split, path, mol)
-    if fixture > 0:
+    source_kind = str(dcfg.get("source", "crossdocked_raw")).lower()
+
+    if fixture == 0 and source_kind == "targetdiff_lmdb":
+        # The TargetDiff release stores each ligand's real bond graph, so the
+        # 'sdf' label is exact chemistry rather than reconstructed geometry --
+        # and the surrogate trains on precisely the ligand distribution stage 2
+        # will show it.
+        from stage2.crossdocked_lmdb import iter_lmdb_ligands, make_splits
+
+        src_lmdb = resolve_path(dcfg.get("source_lmdb"))
+        src_split = dcfg.get("source_split")
+        if src_lmdb is None:
+            raise ValueError("data.source is 'targetdiff_lmdb' but "
+                             "data.source_lmdb is not set")
+        splits = (make_splits(resolve_path(src_split), val_size=0)
+                  if src_split else {"train": None, "test": []})
+        for split_name in ("train", "test"):
+            idx = splits.get(split_name)
+            if idx is not None and len(idx) == 0:
+                continue
+            print(f"[build] reading {split_name} ligands from {src_lmdb.name}")
+            for path, mol in tqdm(iter_lmdb_ligands(
+                    src_lmdb, idx, dcfg.get("field_map") or None,
+                    dcfg.get("max_molecules")), desc=f"read {split_name}"):
+                sources.append((split_name, path, mol))
+    elif fixture > 0:
         print(f"[build] fixture mode: {fixture} synthetic molecules")
         for i, (path, mol) in enumerate(_fixture_molecules(fixture)):
             sources.append(("test" if i % 10 == 0 else "train", path, mol))
@@ -568,13 +593,15 @@ def collate_fn(batch: List[dict]) -> dict:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(description="Build the SA surrogate LMDB")
     p.add_argument("--config", default=str(_REPO_ROOT / "configs/stage1_surrogate.yaml"))
+    p.add_argument("--override", nargs="*", default=[], metavar="KEY=VALUE",
+                   help="dotted config overrides, e.g. data.source=targetdiff_lmdb")
     p.add_argument("--fixture", type=int, default=0,
                    help="build N synthetic molecules instead of reading CrossDocked")
     p.add_argument("--overwrite", action="store_true")
     p.add_argument("--inspect", action="store_true", help="print LMDB metadata and exit")
     args = p.parse_args(argv)
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, args.override)
 
     if args.inspect:
         meta = SALMDBDataset.read_meta(cfg["data"]["lmdb_path"])

@@ -26,7 +26,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from stage2.compat import ensure_dependencies  # noqa: E402  (must precede DiffSBDD)
+from common.compat import ensure_dependencies  # noqa: E402  (must precede DiffSBDD)
 
 _PARENT_KWARGS = (
     "outdir", "dataset", "datadir", "batch_size", "lr", "egnn_params",
@@ -86,6 +86,10 @@ def build_module(cfg, base_ckpt_path: Path, verbose: bool = True):
     # datadir / surrogate checkpoint fall back to the shared paths block
     if not merged.get("datadir"):
         merged["datadir"] = cfg.paths.get("processed_crossdock")
+    lmdb_source = str((_to_plain(cfg.get("data", {})) or {}).get(
+        "source", "npz")).lower() == "targetdiff_lmdb"
+    if not merged.get("datadir") and lmdb_source:
+        merged["datadir"] = "."      # unused by the LMDB source
     if not merged.get("datadir"):
         raise ValueError(
             "no dataset directory: set paths.processed_crossdock (or "
@@ -117,6 +121,10 @@ def build_module(cfg, base_ckpt_path: Path, verbose: bool = True):
     parent_kwargs = {k: _wrap(merged[k]) if isinstance(merged.get(k), dict) else merged.get(k)
                      for k in _PARENT_KWARGS}
 
+    data_cfg = _to_plain(cfg.get("data", {})) or {"source": "npz"}
+    if not data_cfg.get("raw_dir"):
+        data_cfg["raw_dir"] = cfg.paths.get("crossdocked_raw")
+
     if verbose:
         changed = [k for k in overrides
                    if k in hp_plain and _to_plain(overrides[k]) != hp_plain[k]]
@@ -131,6 +139,7 @@ def build_module(cfg, base_ckpt_path: Path, verbose: bool = True):
         surrogate=surrogate,
         reward=_to_plain(cfg.reward),
         anchor=_to_plain(cfg.anchor),
+        data=data_cfg,
         **parent_kwargs,
     )
 

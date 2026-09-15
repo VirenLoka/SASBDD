@@ -35,7 +35,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from stage2.compat import ensure_dependencies  # noqa: E402
+from common.compat import ensure_dependencies  # noqa: E402
 
 
 def calibrate(cfg, base_ckpt: Path, n_batches: int = 16,

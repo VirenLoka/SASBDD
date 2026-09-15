@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import copy
 import math
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -44,8 +45,10 @@ def _global_norm(grads: Sequence[Optional[torch.Tensor]],
 class SAGuidedDDPM(LigandPocketDDPM):
 
     def __init__(self, *, surrogate: Dict[str, Any], reward: Dict[str, Any],
-                 anchor: Dict[str, Any], **parent_kwargs):
+                 anchor: Dict[str, Any], data: Optional[Dict[str, Any]] = None,
+                 **parent_kwargs):
         super().__init__(**parent_kwargs)
+        self.data_cfg = dict(data or {"source": "npz"})
 
         # The split backward in training_step needs control of the optimiser.
         self.automatic_optimization = False
@@ -84,6 +87,7 @@ class SAGuidedDDPM(LigandPocketDDPM):
             self.ref_ddpm = None
 
         self.conditional = (self.mode != "joint")
+        self._splits = None
         self.grad_clip_ceiling = self.reward_cfg.get("grad_clip_ceiling")
         self._step_count = 0
         self._last_diag: Dict[str, float] = {}
@@ -96,6 +100,73 @@ class SAGuidedDDPM(LigandPocketDDPM):
         if getattr(self, "sa_surrogate", None) is not None:
             self.sa_surrogate.eval()
         return self
+
+    # -- data ----------------------------------------------------------------
+    def _build_lmdb_dataset(self, split: str):
+        from common.config import resolve_path
+        from stage2.crossdocked_lmdb import CrossDockedLMDBDataset, make_splits
+
+        d = self.data_cfg
+        lmdb_path = resolve_path(d.get("lmdb_path"))
+        split_path = resolve_path(d.get("split_path"))
+        if lmdb_path is None or split_path is None:
+            raise ValueError(
+                "data.source is 'targetdiff_lmdb' but data.lmdb_path / "
+                "data.split_path are not set")
+        if self._splits is None:
+            self._splits = make_splits(split_path,
+                                       val_size=int(d.get("val_size", 300)),
+                                       seed=int(d.get("split_seed", 0)))
+        return CrossDockedLMDBDataset(
+            lmdb_path, self._splits.get(split, []),
+            dataset_name=self.dataset_name,
+            pocket_cutoff=d.get("pocket_cutoff", 8.0),
+            center=bool(d.get("center", True)),
+            field_map=d.get("field_map") or None,
+            max_ligand_atoms=d.get("max_ligand_atoms"),
+        )
+
+    def setup(self, stage: Optional[str] = None):
+        """Adds the TargetDiff LMDB source alongside the original .npz path."""
+        if str(self.data_cfg.get("source", "npz")).lower() != "targetdiff_lmdb":
+            return super().setup(stage)
+
+        if not hasattr(self, "_splits"):
+            self._splits = None
+        if stage == "fit":
+            self.train_dataset = self._build_lmdb_dataset("train")
+            self.val_dataset = self._build_lmdb_dataset("val")
+            if len(self.val_dataset) == 0:
+                raise RuntimeError(
+                    "empty validation split; raise data.val_size (the pose "
+                    "split ships no validation set, so one is carved from train)")
+        elif stage == "test":
+            self.test_dataset = self._build_lmdb_dataset("test")
+        else:
+            raise NotImplementedError(stage)
+
+    def get_full_path(self, receptor_name):
+        """Resolve a receptor PDB for docking.
+
+        The parent assumes `<datadir>/val/<PDB>-<suffix>.pdb`, which does not
+        exist for the LMDB source -- there the record already carries a path
+        relative to the raw crossdocked_pocket10 tree.
+        """
+        if str(self.data_cfg.get("source", "npz")).lower() == "targetdiff_lmdb":
+            from common.config import resolve_path
+            raw = self.data_cfg.get("raw_dir")
+            return Path(resolve_path(raw), receptor_name) if raw else Path(receptor_name)
+        return super().get_full_path(receptor_name)
+
+    def analyze_sample(self, molecules, atom_types, aa_types, receptors=None):
+        """Skip smina docking unless explicitly enabled.
+
+        `analyze_sample` docks whenever receptors are passed, which needs smina
+        plus the receptor PDBs on disk; neither is implied by having the LMDB.
+        """
+        if not bool(self.data_cfg.get("docking_eval", False)):
+            receptors = None
+        return super().analyze_sample(molecules, atom_types, aa_types, receptors)
 
     # -- reward weight -------------------------------------------------------
     def reward_weight_now(self) -> float:

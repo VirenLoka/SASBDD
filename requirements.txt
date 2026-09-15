@@ -1,44 +1,41 @@
 # DiffSBDD Requirements
-# Python 3.10.4 recommended (matches environment.yaml)
-# Install via conda first for GPU/CUDA packages, then pip for the rest.
-#
-# Recommended setup:
-#   conda env create -f environment.yaml
-#   conda activate diffsbdd
-#   pip install -r requirements.txt
+# Versions have been relaxed to ensure compatibility with modern Python environments.
 
 # ── Core Deep Learning ────────────────────────────────────────────────────────
-torch==2.0.1           # CUDA 11.8 wheel; install via conda (see environment.yaml)
-pytorch-lightning==1.8.4
-torchmetrics==1.4.2
+torch
+pytorch-lightning>=1.8.4
+torchmetrics>=1.4.2
 
 # ── PyTorch Geometric ecosystem ───────────────────────────────────────────────
-torch-scatter==2.1.2   # install via conda channel pyg or pip with matching torch/cuda
-torch-geometric        # TransformerConv used in sa_surrogate/model.py
+# Note: If pip fails to build torch-scatter, you may need to install it from PyG 
+# matching your specific torch/cuda versions:
+# pip install torch-scatter -f https://data.pyg.org/whl/torch-<version>+<cuda>.html
+torch-scatter
+torch-geometric
 
 # ── Chemistry / Bioinformatics ────────────────────────────────────────────────
-rdkit==2022.03.2       # install via conda; rdkit is not on PyPI officially
-biopython==1.79
-openbabel==3.1.1       # install via conda; Python bindings bundled
+rdkit
+biopython>=1.79
+openbabel-wheel       # Used instead of 'openbabel' to avoid complex source builds via pip
 
 # ── Scientific Computing ──────────────────────────────────────────────────────
-numpy==1.26.4
-scipy==1.13.1
-networkx==3.3
-pandas==2.2.2
+numpy<2.0.0           # Capped below 2.0 to prevent PyTorch/SciPy compatibility issues
+scipy
+networkx
+pandas
 
 # ── Experiment Tracking ───────────────────────────────────────────────────────
-wandb==0.13.1
+wandb
 
 # ── Visualisation ─────────────────────────────────────────────────────────────
 matplotlib
-seaborn==0.13.2
-imageio==2.21.2
+seaborn
+imageio
 
 # ── Data Storage ─────────────────────────────────────────────────────────────
-lmdb                   # used in sa_surrogate/dataset.py for molecule LMDB store
+lmdb
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
-tqdm==4.66.5
-pyyaml==6.0.1          # yaml package maps to pyyaml on PyPI
-protobuf>=3.20,<4.0
+tqdm
+pyyaml
+protobuf

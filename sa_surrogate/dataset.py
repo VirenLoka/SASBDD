@@ -37,7 +37,7 @@ import pickle
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -307,7 +307,7 @@ def build_lmdb(cfg: dict, fixture: int = 0, overwrite: bool = False) -> Path:
     max_molecules = dcfg.get("max_molecules")
 
     # ---- gather source molecules, tagged with their official split ----------
-    sources: List[Tuple[str, str, Chem.Mol]] = []  # (official_split, path, mol)
+    sources: Any = []  # (official_split, path, mol); a generator for the LMDB source
     source_kind = str(dcfg.get("source", "crossdocked_raw")).lower()
 
     if fixture == 0 and source_kind == "targetdiff_lmdb":
@@ -324,15 +324,22 @@ def build_lmdb(cfg: dict, fixture: int = 0, overwrite: bool = False) -> Path:
                              "data.source_lmdb is not set")
         splits = (make_splits(resolve_path(src_split), val_size=0)
                   if src_split else {"train": None, "test": []})
-        for split_name in ("train", "test"):
-            idx = splits.get(split_name)
-            if idx is not None and len(idx) == 0:
-                continue
-            print(f"[build] reading {split_name} ligands from {src_lmdb.name}")
-            for path, mol in tqdm(iter_lmdb_ligands(
-                    src_lmdb, idx, dcfg.get("field_map") or None,
-                    dcfg.get("max_molecules")), desc=f"read {split_name}"):
-                sources.append((split_name, path, mol))
+
+        def _stream():
+            # Streamed rather than materialised: the train split is ~100k
+            # records, and holding that many RDKit molecules before dedup is
+            # gigabytes for no reason.
+            for split_name in ("train", "test"):
+                idx = splits.get(split_name)
+                if idx is not None and len(idx) == 0:
+                    continue
+                print(f"[build] reading {split_name} ligands from {src_lmdb.name}")
+                for path, mol in iter_lmdb_ligands(
+                        src_lmdb, idx, dcfg.get("field_map") or None,
+                        dcfg.get("max_molecules")):
+                    yield split_name, path, mol
+
+        sources = _stream()
     elif fixture > 0:
         print(f"[build] fixture mode: {fixture} synthetic molecules")
         for i, (path, mol) in enumerate(_fixture_molecules(fixture)):

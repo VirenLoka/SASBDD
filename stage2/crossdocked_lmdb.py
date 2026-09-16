@@ -418,9 +418,9 @@ def load_pose_split(split_path: str | Path) -> Dict[str, List[int]]:
     out: Dict[str, List[int]] = {}
     for name, value in obj.items():
         entries = list(value)
-        if entries and isinstance(entries[0], (int, np.integer)):
-            out[str(name)] = [int(x) for x in entries]
-        elif entries and torch.is_tensor(entries[0]):
+        if not entries:
+            out[str(name)] = []          # e.g. the release's empty 'val' key
+        elif isinstance(entries[0], (int, np.integer)) or torch.is_tensor(entries[0]):
             out[str(name)] = [int(x) for x in entries]
         else:
             out[str(name)] = list(range(len(entries)))
@@ -438,7 +438,8 @@ def make_splits(split_path: str | Path, val_size: int = 300, seed: int = 0
     """
     splits = load_pose_split(split_path)
     train = list(splits.get("train", []))
-    if "val" not in splits and val_size > 0 and train:
+    # An empty 'val' key counts as absent -- the release ships one.
+    if not splits.get("val") and val_size > 0 and train:
         rng = np.random.default_rng(seed)
         perm = rng.permutation(len(train))
         n_val = min(int(val_size), max(0, len(train) - 1))
@@ -492,13 +493,101 @@ def inspect_lmdb(lmdb_path: str | Path, split_path: Optional[str | Path] = None,
         print("\nsplits: " + ", ".join(f"{k}={len(v)}" for k, v in splits.items()))
 
 
+def check_lmdb(lmdb_path: str | Path, split_path: Optional[str | Path] = None,
+               n: int = 500, pocket_cutoff: Optional[float] = 8.0,
+               dataset_name: str = "crossdock") -> None:
+    """Run the real build path over `n` records and report what comes out.
+
+    Worth running before a long job: it is the only way to confirm that residue
+    inference and pocket cropping behave on your actual structures, and that the
+    ligand vocabulary is covered.
+    """
+    from collections import Counter
+
+    splits = make_splits(split_path, val_size=0) if split_path else None
+    indices = splits["train"][:n] if splits else list(range(n))
+
+    uncropped = CrossDockedLMDBDataset(lmdb_path, indices, dataset_name=dataset_name,
+                                       pocket_cutoff=None, verbose=False)
+    cropped = CrossDockedLMDBDataset(lmdb_path, indices, dataset_name=dataset_name,
+                                     pocket_cutoff=pocket_cutoff, verbose=False)
+
+    lig_n, pock_raw, pock_cut, res_n = [], [], [], []
+    res_ok = 0
+    lig_elems, pock_elems, bad_elems = Counter(), Counter(), Counter()
+    ok = 0
+
+    for i in range(len(cropped)):
+        try:
+            rec = cropped.raw_record(i)
+        except Exception:
+            continue
+        lig_sym = elements_to_symbols(resolve_field(rec, "ligand_element"))
+        pock_sym = elements_to_symbols(resolve_field(rec, "protein_element"))
+        lig_elems.update(s for s in lig_sym if s != "H")
+        pock_elems.update(s for s in pock_sym if s != "H")
+        bad_elems.update(s for s in lig_sym
+                         if s != "H" and s.capitalize() not in cropped.atom_encoder)
+
+        res = infer_residue_ids(resolve_field(rec, "protein_atom_name"),
+                                _to_numpy(resolve_field(rec, "protein_atom_to_aa_type")),
+                                len(pock_sym))
+        if res is not None:
+            res_ok += 1
+            res_n.append(len(np.unique(res)))
+
+        a, b = uncropped.build(i), cropped.build(i)
+        if a is not None:
+            pock_raw.append(int(a["num_pocket_nodes"]))
+        if b is not None:
+            ok += 1
+            lig_n.append(int(b["num_lig_atoms"]))
+            pock_cut.append(int(b["num_pocket_nodes"]))
+
+    def stat(name, xs, unit=""):
+        if not xs:
+            print(f"  {name:28s} (none)")
+            return
+        a = np.asarray(xs)
+        print(f"  {name:28s} mean={a.mean():7.1f}  median={np.median(a):7.1f}  "
+              f"min={a.min():5d}  max={a.max():5d}{unit}")
+
+    print(f"\n=== checked {len(cropped)} records "
+          f"({'train split' if splits else 'first n'}) ===")
+    print(f"  usable: {ok}/{len(cropped)} ({ok / max(len(cropped), 1):.1%})")
+    if cropped.rejection_summary():
+        print(f"  rejected: {cropped.rejection_summary()}")
+    stat("ligand heavy atoms", lig_n)
+    stat("pocket atoms (no crop)", pock_raw)
+    stat(f"pocket atoms ({pocket_cutoff} A crop)", pock_cut)
+    if pock_raw and pock_cut:
+        print(f"  {'crop keeps':28s} {np.mean(pock_cut) / np.mean(pock_raw):.1%} of pocket atoms")
+    print(f"  {'residues inferred for':28s} {res_ok}/{len(cropped)} pockets")
+    stat("residues per pocket", res_n)
+
+    print(f"\n  ligand elements: {dict(lig_elems.most_common())}")
+    missing = [k for k in cropped.atom_encoder if k not in lig_elems]
+    if missing:
+        print(f"  vocabulary columns never seen in ligands: {missing}")
+    if bad_elems:
+        print(f"  OUT-OF-VOCAB ligand elements (these complexes are dropped): "
+              f"{dict(bad_elems.most_common())}")
+    print(f"  pocket elements: {dict(pock_elems.most_common(8))}")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(description="Inspect a TargetDiff CrossDocked LMDB")
     p.add_argument("lmdb", help="path to ...processed_final.lmdb")
     p.add_argument("--split", default=None, help="crossdocked_pocket10_pose_split.pt")
     p.add_argument("-n", type=int, default=2, help="records to dump")
+    p.add_argument("--check", type=int, default=0, metavar="N",
+                   help="run the real build path over N records and report stats")
+    p.add_argument("--pocket-cutoff", type=float, default=8.0)
     args = p.parse_args(argv)
-    inspect_lmdb(args.lmdb, args.split, args.n)
+    if args.check:
+        check_lmdb(args.lmdb, args.split, args.check, args.pocket_cutoff)
+    else:
+        inspect_lmdb(args.lmdb, args.split, args.n)
     return 0
 
 
@@ -520,7 +609,6 @@ def ligand_mol_from_record(rec: Dict[str, Any],
     (coordinates re-attached where possible), then to None.
     """
     from rdkit import Chem
-    from rdkit.Chem import AllChem
 
     from constants import bond_dict
 
@@ -557,13 +645,24 @@ def ligand_mol_from_record(rec: Dict[str, Any],
             except Exception:
                 pass                  # fall through to SMILES
 
-    smiles = f("ligand_smiles")
-    if smiles:
-        m = Chem.MolFromSmiles(str(smiles))
-        if m is not None:
-            m = Chem.AddHs(m)
-            if AllChem.EmbedMolecule(m, AllChem.ETKDGv3()) == 0:
-                return Chem.RemoveHs(m)
+    # No ETKDG fallback: callers read coordinates off the returned molecule, so
+    # re-embedding would silently swap the docked pose for an arbitrary
+    # conformer.  Fall back to perceiving bonds from the real coordinates
+    # instead, which keeps the geometry and is honest about the bonds.
+    if pos is not None and symbols and len(symbols) == len(pos):
+        from analysis.molecule_builder import build_molecule
+        from constants import dataset_params
+        encoder = dataset_params["crossdock"]["atom_encoder"]
+        if all(s.capitalize() in encoder for s in symbols):
+            try:
+                types = torch.tensor([encoder[s.capitalize()] for s in symbols])
+                mol = build_molecule(torch.tensor(pos, dtype=torch.float32), types,
+                                     dataset_params["crossdock"],
+                                     add_coords=True, use_openbabel=True)
+                Chem.SanitizeMol(mol)
+                return mol
+            except Exception:
+                pass
     return None
 
 

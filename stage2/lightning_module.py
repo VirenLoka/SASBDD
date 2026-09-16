@@ -386,8 +386,10 @@ class SAGuidedDDPM(LigandPocketDDPM):
             out["sa_validity"] = n_valid / n_built
         return out
 
-    def validation_epoch_end(self, validation_step_outputs):
-        super().validation_epoch_end(validation_step_outputs)
+    def on_validation_epoch_end(self):
+        # `validation_epoch_end` was removed in Lightning 2.0; this hook exists
+        # in both 1.x and 2.x and the outputs argument was never used.
+        super().on_validation_epoch_end()
         if not self.trainer.is_global_zero:
             return
         every = int(self.reward_cfg.get("eval_sa_epochs", 0) or 0)

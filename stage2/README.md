@@ -247,6 +247,31 @@ types you can raise `reward.t_max`.
 
 ---
 
+## Library versions
+
+The repo was written against pytorch-lightning 1.8 (what `environment.yaml`
+pinned). **1.8.x and 2.x both work now** — `common/compat.py` absorbs the
+differences rather than forcing a downgrade. Verified end to end on PL 1.8.6 and
+PL 2.4.0, including all 11 entry points.
+
+```bash
+python common/compat.py
+```
+
+prints your versions and which known differences are being handled. What it
+covers:
+
+| change | where it bit | handling |
+|---|---|---|
+| PL 2.0 removed `*_epoch_end` hooks | `lightning_modules.py:382` **and** `stage2/lightning_module.py` | renamed to `on_validation_epoch_end`, which exists in both 1.x and 2.x; the outputs argument was never used |
+| PL 2.0 dropped `optimizer_idx` from `configure_gradient_clipping` | `lightning_modules.py:874` | signature widened to `(self, optimizer, *args, **kwargs)` |
+| PL 2.0 rejects `strategy=None` | `train.py`, `stage2/train.py` | `compat.trainer_strategy()` returns `None` on 1.x, `"auto"` on 2.x |
+| torch 2.6 flipped `torch.load` to `weights_only=True` | 7 call sites | `compat.torch_load()` sets it where the argument exists |
+| biopython 1.80 removed `three_to_one` | `lightning_modules.py`, `process_crossdock.py`, `process_bindingmoad.py` | `compat.three_to_one()` falls back to `protein_letters_3to1` |
+
+Note the first two are bugs in **upstream DiffSBDD**, not just in the stage-2
+code — the base `LigandPocketDDPM` could not run on Lightning 2.x either.
+
 ## Known limitations
 
 - **`residual_scale` defaults are guesses** until `calibrate.py` is run on real

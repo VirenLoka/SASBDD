@@ -138,3 +138,129 @@ def verify_shim_against_real(atol: float = 1e-6) -> bool:
     ok &= torch.allclose(real.scatter_mean(src, idx, dim=0, dim_size=9),
                          _scatter_mean(src, idx, dim=0, dim_size=9), atol=atol)
     return bool(ok)
+
+
+# -----------------------------------------------------------------------------
+# Library version compatibility
+#
+# The repo was written against pytorch-lightning 1.8 (what environment.yaml
+# pins).  Lightning 2.0 removed several hooks and changed two signatures, and
+# torch 2.6 flipped a `torch.load` default.  These helpers keep one codebase
+# working on both rather than forcing an environment downgrade.
+# -----------------------------------------------------------------------------
+
+def _version_tuple(mod_name: str):
+    try:
+        mod = __import__(mod_name)
+        raw = getattr(mod, "__version__", "0")
+    except Exception:
+        return None
+    parts = []
+    for chunk in str(raw).split(".")[:3]:
+        digits = "".join(c for c in chunk if c.isdigit())
+        parts.append(int(digits) if digits else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def pl_version():
+    return _version_tuple("pytorch_lightning")
+
+
+def pl_is_v2() -> bool:
+    v = pl_version()
+    return bool(v and v[0] >= 2)
+
+
+def trainer_strategy(devices):
+    """`strategy=None` is valid on PL 1.x and rejected on 2.x, which wants
+    "auto".  Multi-device is "ddp" on both."""
+    n = devices if isinstance(devices, int) else 1
+    if n > 1:
+        return "ddp"
+    return "auto" if pl_is_v2() else None
+
+
+def torch_load(path, **kwargs):
+    """`torch.load` with weights_only=False where the argument exists.
+
+    torch 2.6 flipped the default to True, which refuses to unpickle Lightning
+    checkpoints and the CrossDocked split files.
+    """
+    import inspect
+
+    import torch as _torch
+
+    try:
+        if "weights_only" in inspect.signature(_torch.load).parameters:
+            kwargs.setdefault("weights_only", False)
+    except (TypeError, ValueError):
+        pass
+    return _torch.load(path, **kwargs)
+
+
+def three_to_one(resname: str) -> str:
+    """Three-letter residue code to one letter.
+
+    `Bio.PDB.Polypeptide.three_to_one` was removed in biopython 1.80 in favour
+    of the `protein_letters_3to1` mapping.
+    """
+    try:
+        from Bio.PDB.Polypeptide import three_to_one as _legacy
+        return _legacy(resname)
+    except (ImportError, AttributeError):
+        pass
+    from Bio.PDB.Polypeptide import protein_letters_3to1
+    key = resname.strip()
+    for candidate in (key.upper(), key.capitalize(), key):
+        if candidate in protein_letters_3to1:
+            return protein_letters_3to1[candidate]
+    raise KeyError(resname)
+
+
+KNOWN_ISSUES = [
+    ("pytorch_lightning", (2, 0, 0), "*_epoch_end hooks removed; "
+     "configure_gradient_clipping dropped optimizer_idx; strategy=None invalid"),
+    ("torch", (2, 6, 0), "torch.load defaults to weights_only=True"),
+    ("Bio", (1, 80, 0), "Bio.PDB.Polypeptide.three_to_one removed"),
+    ("numpy", (2, 0, 0), "NumPy 2 ABI; rebuild compiled extensions if imports fail"),
+]
+
+
+def report() -> int:
+    """Print the environment and flag known-incompatible versions."""
+    import importlib
+
+    print("environment")
+    names = ["torch", "pytorch_lightning", "torch_geometric", "torch_scatter",
+             "rdkit", "Bio", "numpy", "lmdb", "openbabel", "wandb", "yaml"]
+    for name in names:
+        try:
+            mod = importlib.import_module(name)
+            ver = getattr(mod, "__version__", "present")
+            note = " (shim)" if getattr(mod, "__SHIM__", False) else ""
+            print(f"  {name:20s} {ver}{note}")
+        except Exception:
+            print(f"  {name:20s} MISSING")
+
+    print("\nhandled version differences")
+    any_flagged = False
+    for name, threshold, what in KNOWN_ISSUES:
+        v = _version_tuple(name)
+        if v is None:
+            continue
+        if v >= threshold:
+            any_flagged = True
+            print(f"  {name} {'.'.join(map(str, v))} >= "
+                  f"{'.'.join(map(str, threshold))}: {what}")
+    if not any_flagged:
+        print("  none apply to these versions")
+    print(f"\n  pl_is_v2()          = {pl_is_v2()}")
+    print(f"  trainer_strategy(1) = {trainer_strategy(1)!r}")
+    print(f"  trainer_strategy(4) = {trainer_strategy(4)!r}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(report())

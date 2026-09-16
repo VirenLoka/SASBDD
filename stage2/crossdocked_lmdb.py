@@ -412,7 +412,8 @@ def load_pose_split(split_path: str | Path) -> Dict[str, List[int]]:
     Accepts index lists (TargetDiff) or lists of (pocket, ligand) name pairs;
     pairs are converted to positions within the split's own ordering.
     """
-    obj = torch.load(str(split_path), map_location="cpu", weights_only=False)
+    from common.compat import torch_load
+    obj = torch_load(str(split_path), map_location="cpu")
     if not isinstance(obj, dict):
         raise ValueError(f"{split_path} does not contain a dict of splits")
     out: Dict[str, List[int]] = {}

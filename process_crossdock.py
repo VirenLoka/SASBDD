@@ -11,7 +11,8 @@ from tqdm import tqdm
 import numpy as np
 
 from Bio.PDB import PDBParser
-from Bio.PDB.Polypeptide import three_to_one, is_aa
+from Bio.PDB.Polypeptide import is_aa
+from common.compat import three_to_one, torch_load  # biopython>=1.80 removed the original
 from rdkit import Chem
 from scipy.ndimage import gaussian_filter
 
@@ -278,7 +279,7 @@ if __name__ == '__main__':
 
     # Read data split
     split_path = Path(args.basedir, 'split_by_name.pt')
-    data_split = torch.load(split_path)
+    data_split = torch_load(split_path)
 
     # There is no validation set, copy 300 training examples (the validation set
     # is not very important in this application)

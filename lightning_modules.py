@@ -12,7 +12,7 @@ import pytorch_lightning as pl
 import wandb
 from torch_scatter import scatter_add, scatter_mean
 from Bio.PDB import PDBParser
-from Bio.PDB.Polypeptide import three_to_one
+from common.compat import three_to_one  # biopython>=1.80 removed the original
 
 from constants import dataset_params, FLOAT_TYPE, INT_TYPE
 from equivariant_diffusion.dynamics import EGNNDynamics
@@ -379,7 +379,10 @@ class LigandPocketDDPM(pl.LightningModule):
     def test_step(self, data, *args):
         self._shared_eval(data, 'test', *args)
 
-    def validation_epoch_end(self, validation_step_outputs):
+    def on_validation_epoch_end(self):
+        # Renamed from `validation_epoch_end`, which Lightning 2.0 removed.
+        # The outputs argument was never used, so the hook is a drop-in and
+        # works on both 1.x and 2.x.
 
         # Perform validation on single GPU
         if not self.trainer.is_global_zero:
@@ -871,8 +874,9 @@ class LigandPocketDDPM(pl.LightningModule):
 
         return molecules
 
-    def configure_gradient_clipping(self, optimizer, optimizer_idx,
-                                    gradient_clip_val, gradient_clip_algorithm):
+    def configure_gradient_clipping(self, optimizer, *args, **kwargs):
+        # Lightning 1.x passes optimizer_idx as the second positional argument
+        # and 2.x does not; neither value is used here, so accept both shapes.
 
         if not self.clip_grad:
             return

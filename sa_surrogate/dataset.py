@@ -206,7 +206,8 @@ def load_crossdocked_split(crossdocked_dir: Path) -> Dict[str, List[Tuple[str, s
             f"{split_path} not found. `data.crossdocked_dir` must point at the "
             f"directory containing crossdocked_pocket10/ and split_by_name.pt"
         )
-    split = torch.load(split_path, map_location="cpu", weights_only=False)
+    from common.compat import torch_load
+    split = torch_load(split_path, map_location="cpu")
     return {k: list(v) for k, v in split.items()}
 
 

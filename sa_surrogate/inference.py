@@ -61,8 +61,8 @@ class SASurrogate:
     def __init__(self, checkpoint: str | Path, device: str = "auto",
                  use_ema: bool = True):
         self.device = get_device(device)
-        ckpt = torch.load(str(resolve_path(checkpoint)), map_location="cpu",
-                          weights_only=False)
+        from common.compat import torch_load
+        ckpt = torch_load(str(resolve_path(checkpoint)), map_location="cpu")
         self.cfg = ckpt["config"]
         self.target = ckpt["target"]
         self.atom_encoder: Dict[str, int] = ckpt["atom_encoder"]

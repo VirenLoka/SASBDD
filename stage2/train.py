@@ -26,7 +26,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from common.compat import ensure_dependencies  # noqa: E402  (must precede DiffSBDD)
+from common.compat import (ensure_dependencies,  # noqa: E402  (must precede DiffSBDD)
+                           torch_load, trainer_strategy)
 
 CONFIG_HINT = "configs/stage2_reward.yaml"
 
@@ -135,11 +136,10 @@ def build_logger(cfg, outdir: Path, run_name: str):
 
 
 def build_module(cfg, base_ckpt_path: Path, verbose: bool = True):
-    import torch
     from common.config import _wrap, deep_merge, resolve_path
     from stage2.lightning_module import SAGuidedDDPM
 
-    ckpt = torch.load(str(base_ckpt_path), map_location="cpu", weights_only=False)
+    ckpt = torch_load(str(base_ckpt_path), map_location="cpu")
     if "hyper_parameters" not in ckpt or "state_dict" not in ckpt:
         raise ValueError(f"{base_ckpt_path} is not a DiffSBDD Lightning checkpoint")
 
@@ -271,7 +271,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         num_sanity_val_steps=int(tr.get("num_sanity_val_steps", 0)),
         accelerator=str(tr.get("accelerator", "auto")),
         devices=devices,
-        strategy=("ddp" if isinstance(devices, int) and devices > 1 else "auto"),
+        strategy=trainer_strategy(devices),
         accumulate_grad_batches=int(tr.get("accumulate_grad_batches", 1)),
         limit_train_batches=(args.steps if args.steps is not None
                              else tr.get("limit_train_batches", 1.0)),

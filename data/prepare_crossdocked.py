@@ -10,7 +10,11 @@ from tqdm import tqdm
 basedir = sys.argv[1]
 structure_dir = Path(basedir, 'crossdocked_pocket10')
 
-test_set = torch.load(Path(basedir, 'split_by_name.pt'))['test']
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.compat import torch_load
+
+test_set = torch_load(Path(basedir, 'split_by_name.pt'))['test']
 
 receptor_dir = Path(basedir, 'receptor_pdbs')
 receptor_dir.mkdir(exist_ok=True)

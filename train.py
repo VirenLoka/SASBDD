@@ -7,6 +7,7 @@ import torch
 import pytorch_lightning as pl
 import numpy as np
 
+from common.compat import torch_load, trainer_strategy
 from common.config import (add_config_args, load_config, merge_args_and_yaml,
                            resolve_path, save_config)
 import sys as _sys, pathlib as _pathlib
@@ -85,7 +86,7 @@ if __name__ == "__main__":
     # Get main config
     ckpt_path = None if args.resume is None else Path(args.resume)
     if args.resume is not None:
-        resume_config = torch.load(
+        resume_config = torch_load(
             ckpt_path, map_location=torch.device('cpu'))['hyper_parameters']
 
         config = merge_configs(config, resume_config)
@@ -144,7 +145,7 @@ if __name__ == "__main__":
         enable_progress_bar=args.enable_progress_bar,
         num_sanity_val_steps=args.num_sanity_val_steps,
         accelerator=accelerator, devices=gpus,
-        strategy=('ddp' if gpus > 1 else None)
+        strategy=trainer_strategy(gpus)
     )
 
     trainer.fit(model=pl_module, ckpt_path=ckpt_path)

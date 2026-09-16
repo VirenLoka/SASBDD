@@ -11,10 +11,13 @@ dependencies:
   - pip=24.2
   - pytorch=2.0.1=*cuda11.8*
   - cudatoolkit=11.8
-  - pytorch-lightning=1.8.4
+  # 1.8.x and 2.x are both supported (see common/compat.py); pinned low here
+  # only to match upstream DiffSBDD. `python common/compat.py` reports what
+  # your environment has and which version differences are being handled.
+  - pytorch-lightning>=1.8.4
   - wandb=0.13.1
   - rdkit=2022.03.2
-  - biopython=1.79
+  - biopython>=1.79   # three_to_one removed in 1.80; handled in common/compat.py
   - imageio=2.21.2
   - scipy=1.13.1
   - pytorch-scatter=2.1.2

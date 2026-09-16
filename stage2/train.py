@@ -28,6 +28,8 @@ if str(_REPO_ROOT) not in sys.path:
 
 from common.compat import ensure_dependencies  # noqa: E402  (must precede DiffSBDD)
 
+CONFIG_HINT = "configs/stage2_reward.yaml"
+
 _PARENT_KWARGS = (
     "outdir", "dataset", "datadir", "batch_size", "lr", "egnn_params",
     "diffusion_params", "num_workers", "augment_noise", "augment_rotation",
@@ -46,6 +48,71 @@ def _to_plain(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: _to_plain(v) for k, v in value.items()}
     return value
+
+
+def _preflight(cfg, merged, data_cfg, surrogate, source: str) -> None:
+    """Validate the whole data configuration at once.
+
+    Reports everything that is missing in a single message with the exact fix,
+    rather than failing on one item, being corrected, then failing on the next.
+    """
+    from common.config import resolve_path
+
+    problems: list = []
+
+    def _missing(path, label):
+        return path is None or not Path(resolve_path(path)).exists()
+
+    if source == "targetdiff_lmdb":
+        if not data_cfg.get("lmdb_path"):
+            problems.append(
+                "data.lmdb_path is not set -- point it at "
+                "crossdocked_v1.1_rmsd1.0_pocket10_processed_final.lmdb")
+        elif _missing(data_cfg["lmdb_path"], "lmdb"):
+            problems.append(f"data.lmdb_path does not exist: {data_cfg['lmdb_path']}")
+        if not data_cfg.get("split_path"):
+            problems.append(
+                "data.split_path is not set -- point it at "
+                "crossdocked_pocket10_pose_split.pt")
+        elif _missing(data_cfg["split_path"], "split"):
+            problems.append(f"data.split_path does not exist: {data_cfg['split_path']}")
+
+    elif source == "npz":
+        if data_cfg.get("lmdb_path"):
+            problems.append(
+                "data.lmdb_path is set but data.source is 'npz'. Add "
+                "`data.source: targetdiff_lmdb` to use the LMDB.")
+        elif not merged.get("datadir"):
+            problems.append(
+                "no dataset directory. Either:\n"
+                "      (a) use the TargetDiff LMDB release -- set\n"
+                "            data.source: targetdiff_lmdb\n"
+                "            data.lmdb_path: <...processed_final.lmdb>\n"
+                "            data.split_path: <crossdocked_pocket10_pose_split.pt>\n"
+                "      (b) use process_crossdock.py output -- set\n"
+                "            paths.processed_crossdock: <dir with train/val/test.npz>")
+        else:
+            train_npz = Path(resolve_path(merged["datadir"]), "train.npz")
+            if not train_npz.exists():
+                problems.append(
+                    f"{train_npz} not found. paths.processed_crossdock must be the "
+                    f"OUTPUT of process_crossdock.py, not the raw release.")
+    else:
+        problems.append(f"unknown data.source: {source!r} "
+                        f"(expected 'npz' or 'targetdiff_lmdb')")
+
+    ckpt = surrogate.get("checkpoint")
+    if not ckpt:
+        problems.append("no SA surrogate: set surrogate.checkpoint or "
+                        "paths.surrogate_ckpt to a stage-1 best.pt")
+    elif _missing(ckpt, "surrogate"):
+        problems.append(f"surrogate checkpoint does not exist: {ckpt}")
+
+    if problems:
+        raise SystemExit(
+            "stage 2 is not configured yet:\n  - "
+            + "\n  - ".join(problems)
+            + f"\n\nEdit {CONFIG_HINT}, or pass --override key=value.")
 
 
 def build_logger(cfg, outdir: Path, run_name: str):
@@ -83,19 +150,22 @@ def build_module(cfg, base_ckpt_path: Path, verbose: bool = True):
     overrides = _to_plain(cfg.get("diffsbdd", {})) or {}
     merged = deep_merge(hp_plain, {k: v for k, v in overrides.items() if v is not None})
 
-    # datadir / surrogate checkpoint fall back to the shared paths block
+    data_cfg = _to_plain(cfg.get("data", {})) or {"source": "npz"}
+    if not data_cfg.get("raw_dir"):
+        data_cfg["raw_dir"] = cfg.paths.get("crossdocked_raw")
+    source = str(data_cfg.get("source", "npz")).lower()
+
+    surrogate = _to_plain(cfg.surrogate)
+    if not surrogate.get("checkpoint"):
+        surrogate["checkpoint"] = cfg.paths.get("surrogate_ckpt")
+
+    # datadir falls back to the shared paths block
     if not merged.get("datadir"):
         merged["datadir"] = cfg.paths.get("processed_crossdock")
-    lmdb_source = str((_to_plain(cfg.get("data", {})) or {}).get(
-        "source", "npz")).lower() == "targetdiff_lmdb"
-    if not merged.get("datadir") and lmdb_source:
+    if not merged.get("datadir") and source == "targetdiff_lmdb":
         merged["datadir"] = "."      # unused by the LMDB source
-    if not merged.get("datadir"):
-        raise ValueError(
-            "no dataset directory: set paths.processed_crossdock (or "
-            "diffsbdd.datadir) to the output of process_crossdock.py -- the raw "
-            "crossdocked_pocket10 release is not enough, stage 2 needs the "
-            "processed train/val/test.npz")
+
+    _preflight(cfg, merged, data_cfg, surrogate, source)
     merged["datadir"] = str(resolve_path(merged["datadir"]))
 
     if node_histogram is None:
@@ -110,20 +180,10 @@ def build_module(cfg, base_ckpt_path: Path, verbose: bool = True):
     outdir = Path(resolve_path(cfg.paths.get("logdir", "runs")), cfg.run_name)
     merged["outdir"] = str(outdir)
 
-    surrogate = _to_plain(cfg.surrogate)
-    if not surrogate.get("checkpoint"):
-        surrogate["checkpoint"] = cfg.paths.get("surrogate_ckpt")
-    if not surrogate.get("checkpoint"):
-        raise ValueError("no surrogate checkpoint: set surrogate.checkpoint or "
-                         "paths.surrogate_ckpt")
     surrogate["checkpoint"] = str(resolve_path(surrogate["checkpoint"]))
 
     parent_kwargs = {k: _wrap(merged[k]) if isinstance(merged.get(k), dict) else merged.get(k)
                      for k in _PARENT_KWARGS}
-
-    data_cfg = _to_plain(cfg.get("data", {})) or {"source": "npz"}
-    if not data_cfg.get("raw_dir"):
-        data_cfg["raw_dir"] = cfg.paths.get("crossdocked_raw")
 
     if verbose:
         changed = [k for k in overrides

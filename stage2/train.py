@@ -271,7 +271,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         num_sanity_val_steps=int(tr.get("num_sanity_val_steps", 0)),
         accelerator=str(tr.get("accelerator", "auto")),
         devices=devices,
-        strategy=("ddp" if isinstance(devices, int) and devices > 1 else None),
+        strategy=("ddp" if isinstance(devices, int) and devices > 1 else "auto"),
         accumulate_grad_batches=int(tr.get("accumulate_grad_batches", 1)),
         limit_train_batches=(args.steps if args.steps is not None
                              else tr.get("limit_train_batches", 1.0)),

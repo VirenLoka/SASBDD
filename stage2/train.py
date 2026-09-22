@@ -191,7 +191,14 @@ def build_module(cfg, base_ckpt_path: Path, verbose: bool = True):
         print(f"[stage2] base checkpoint : {base_ckpt_path}")
         print(f"[stage2] mode            : {parent_kwargs['mode']} / "
               f"{parent_kwargs['pocket_representation']}")
-        print(f"[stage2] datadir         : {merged['datadir']}")
+        if source == "targetdiff_lmdb":
+            print(f"[stage2] data            : targetdiff_lmdb "
+                  f"{data_cfg.get('lmdb_path')}")
+            print(f"[stage2] split           : {data_cfg.get('split_path')} "
+                  f"(pocket_cutoff={data_cfg.get('pocket_cutoff')}, "
+                  f"val_size={data_cfg.get('val_size')})")
+        else:
+            print(f"[stage2] data            : npz {merged['datadir']}")
         print(f"[stage2] surrogate       : {surrogate['checkpoint']}")
         print(f"[stage2] overridden from config: {sorted(changed) or 'nothing'}")
 

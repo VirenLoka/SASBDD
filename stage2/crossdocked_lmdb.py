@@ -82,6 +82,38 @@ FIELD_ALIASES: Dict[str, Sequence[str]] = {
 
 
 # -----------------------------------------------------------------------------
+# environment cache
+#
+# LMDB refuses to open the same file twice in one process, and stage 2 needs a
+# train dataset and a val dataset over the same file:
+#   lmdb.Error: The environment '...' is already open in this process.
+# One handle is shared per (path, pid).  The pid is part of the key so a forked
+# DataLoader worker opens its own rather than inheriting a handle across fork,
+# which LMDB does not support.  Handles stay open for the life of the process;
+# that is the intended usage for a read-only environment.
+# -----------------------------------------------------------------------------
+
+_ENV_CACHE: Dict[Any, Any] = {}
+
+
+def open_env(path: str | Path):
+    """Shared read-only lmdb.Environment for `path`."""
+    import lmdb
+
+    real = os.path.realpath(str(path))
+    key = (os.getpid(), real)
+    env = _ENV_CACHE.get(key)
+    if env is None:
+        if not os.path.exists(real):
+            raise FileNotFoundError(f"LMDB not found: {real}")
+        env = lmdb.open(real, subdir=os.path.isdir(real), readonly=True,
+                        lock=False, readahead=False, meminit=False,
+                        max_readers=2048)
+        _ENV_CACHE[key] = env
+    return env
+
+
+# -----------------------------------------------------------------------------
 # permissive unpickling
 # -----------------------------------------------------------------------------
 
@@ -271,12 +303,8 @@ class CrossDockedLMDBDataset(Dataset):
 
     # -- lmdb plumbing ------------------------------------------------------
     def _open(self):
-        import lmdb
         if self._env is None:
-            path = self.lmdb_path
-            self._env = lmdb.open(path, subdir=os.path.isdir(path), readonly=True,
-                                  lock=False, readahead=False, meminit=False,
-                                  max_readers=512)
+            self._env = open_env(self.lmdb_path)
         return self._env
 
     def _all_keys(self) -> List[bytes]:
@@ -460,11 +488,8 @@ def make_splits(split_path: str | Path, val_size: int = 300, seed: int = 0
 
 def inspect_lmdb(lmdb_path: str | Path, split_path: Optional[str | Path] = None,
                  n: int = 2) -> None:
-    import lmdb
-
     path = str(lmdb_path)
-    env = lmdb.open(path, subdir=os.path.isdir(path), readonly=True,
-                    lock=False, readahead=False)
+    env = open_env(path)          # shared: never opened or closed twice
     with env.begin(write=False) as txn:
         keys = [k for k, _ in txn.cursor()]
         print(f"records: {len(keys)}")
@@ -487,7 +512,6 @@ def inspect_lmdb(lmdb_path: str | Path, split_path: Optional[str | Path] = None,
                 got = resolve_field(rec, canonical)
                 mark = "ok " if got is not None else "MISSING"
                 print(f"    {mark} {canonical}")
-    env.close()
 
     if split_path:
         splits = load_pose_split(split_path)

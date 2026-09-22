@@ -43,8 +43,6 @@ def calibrate(cfg, base_ckpt: Path, n_batches: int = 16,
     import torch
     from torch.utils.data import DataLoader
 
-    from common.config import resolve_path
-    from dataset import ProcessedLigandPocketDataset
     from stage2.train import build_module
 
     module = build_module(cfg, base_ckpt, verbose=False).eval()
@@ -52,9 +50,17 @@ def calibrate(cfg, base_ckpt: Path, n_batches: int = 16,
     n_dims = module.x_dims
     conditional = module.conditional
 
-    datadir = resolve_path(cfg.paths.get("processed_crossdock")
-                           or cfg.diffsbdd.get("datadir"))
-    ds = ProcessedLigandPocketDataset(Path(datadir, f"{split}.npz"))
+    # Reuse the module's own setup so calibration measures whichever source
+    # stage 2 will actually train on (npz or targetdiff_lmdb), rather than
+    # duplicating the loader and silently diverging.
+    if split == "test":
+        module.setup("test")
+        ds = module.test_dataset
+    else:
+        module.setup("fit")
+        ds = module.val_dataset if split == "val" else module.train_dataset
+    if ds is None or len(ds) == 0:
+        raise SystemExit(f"the '{split}' split is empty; try --split train")
     dl = DataLoader(ds, batch_size=int(cfg.diffsbdd.get("batch_size", 8)),
                     shuffle=False, collate_fn=ds.collate_fn)
 

@@ -60,7 +60,7 @@ from sa_surrogate.train import evaluate, get_device  # noqa: E402
 class SASurrogate:
     def __init__(self, checkpoint: str | Path, device: str = "auto",
                  use_ema: bool = True):
-        self.device = get_device(device)
+        self._device = get_device(device)
         from common.compat import torch_load
         ckpt = torch_load(str(resolve_path(checkpoint)), map_location="cpu")
         self.cfg = ckpt["config"]
@@ -70,11 +70,11 @@ class SASurrogate:
 
         self.model = build_model(self.cfg, self.num_classes)
         self.model.load_state_dict(ckpt["model"], strict=False)
-        self.model.to(self.device).eval()
+        self.model.to(self._device).eval()
 
         ccfg = self.cfg["corruption"]
         self.schedule = NoiseSchedule(ccfg["noise_schedule"], ccfg["timesteps"],
-                                      ccfg["noise_precision"]).to(self.device)
+                                      ccfg["noise_precision"]).to(self._device)
         self.h_scale = float(ccfg["norm_values"][1])
         self.x_scale = float(ccfg["norm_values"][0])
         self.higher_is_better = (self.target["mode"] == "pocket2mol")
@@ -85,6 +85,22 @@ class SASurrogate:
               f"epoch={ckpt.get('epoch')} val_MAE={ckpt.get('select_mae'):.4f}")
 
     # -- core ---------------------------------------------------------------
+    @property
+    def device(self) -> torch.device:
+        """Follow the model's actual parameters rather than a value fixed at
+        construction.
+
+        Stage 2 registers `self.model` as a submodule, so Lightning moves it to
+        the GPU after this object is built.  A stored device would then send
+        every input to the CPU and produce
+        "Expected all tensors to be on the same device".
+        """
+        for p in self.model.parameters():
+            return p.device
+        for b in self.model.buffers():
+            return b.device
+        return self._device
+
     def denormalize(self, y: torch.Tensor) -> torch.Tensor:
         if not self.target["normalize"]:
             return y

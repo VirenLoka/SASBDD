@@ -43,9 +43,16 @@ def calibrate(cfg, base_ckpt: Path, n_batches: int = 16,
     import torch
     from torch.utils.data import DataLoader
 
+    from sa_surrogate.train import get_device
     from stage2.train import build_module
 
-    module = build_module(cfg, base_ckpt, verbose=False).eval()
+    # Outside a Trainer nothing moves the module for us, and DiffSBDD's EGNN
+    # self-moves to `egnn_params.device` in its own __init__ (egnn_new.py:161)
+    # -- so without an explicit .to() the EGNN sits on cuda while everything
+    # else, including the batch, stays on the CPU.
+    device = get_device(str(cfg.project.get("device", "auto")))
+    module = build_module(cfg, base_ckpt, verbose=False).to(device).eval()
+    print(f"[calibrate] device: {device}")
     ddpm = module.ddpm
     n_dims = module.x_dims
     conditional = module.conditional
@@ -76,6 +83,8 @@ def calibrate(cfg, base_ckpt: Path, n_batches: int = 16,
             if bi >= n_batches:
                 break
             ligand, pocket = module.get_ligand_and_pocket(data)
+            assert ligand["x"].device == device, (
+                f"batch landed on {ligand['x'].device}, module on {device}")
             ligand, pocket = ddpm.normalize(ligand, pocket)
             B = ligand["size"].size(0)
 

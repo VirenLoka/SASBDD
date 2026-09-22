@@ -182,6 +182,22 @@ def build_module(cfg, base_ckpt_path: Path, verbose: bool = True):
 
     surrogate["checkpoint"] = str(resolve_path(surrogate["checkpoint"]))
 
+    # DiffSBDD's EGNN moves itself onto egnn_params.device inside its own
+    # __init__ (egnn_new.py:161).  The checkpoint says 'cuda', so a CPU run
+    # would still allocate on the GPU, and a GPU run would be split across
+    # devices until the Trainer moved the rest.  Align it with the accelerator
+    # actually being used.
+    accel = str(cfg.trainer.get("accelerator", "auto")).lower()
+    if accel in ("gpu", "cuda"):
+        egnn_device = "cuda"
+    elif accel == "cpu":
+        egnn_device = "cpu"
+    else:
+        import torch as _torch
+        egnn_device = "cuda" if _torch.cuda.is_available() else "cpu"
+    if isinstance(merged.get("egnn_params"), dict):
+        merged["egnn_params"] = {**merged["egnn_params"], "device": egnn_device}
+
     parent_kwargs = {k: _wrap(merged[k]) if isinstance(merged.get(k), dict) else merged.get(k)
                      for k in _PARENT_KWARGS}
 
@@ -200,6 +216,7 @@ def build_module(cfg, base_ckpt_path: Path, verbose: bool = True):
         else:
             print(f"[stage2] data            : npz {merged['datadir']}")
         print(f"[stage2] surrogate       : {surrogate['checkpoint']}")
+        print(f"[stage2] device          : accelerator={accel} -> egnn={egnn_device}")
         print(f"[stage2] overridden from config: {sorted(changed) or 'nothing'}")
 
     module = SAGuidedDDPM(

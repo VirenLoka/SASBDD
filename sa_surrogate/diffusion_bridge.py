@@ -126,27 +126,37 @@ class NoiseSchedule(nn.Module):
         self.register_buffer("log10_r_max", self.log10_r_t.max().clone())
 
     # -- lookups ------------------------------------------------------------
+    # Every lookup moves its index onto the buffers' device and returns a result
+    # on the caller's device.  Buffers follow the module onto the GPU, while
+    # timesteps are often built on the CPU (logging, fixed eval buckets), and
+    # indexing a CUDA tensor with a CPU index tensor is an error.
+    def _lookup(self, table: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        idx = t.to(table.device).long()
+        return table[idx].to(t.device)
+
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
-        return self.alpha_t[t.long()]
+        return self._lookup(self.alpha_t, t)
 
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
-        return self.sigma_t[t.long()]
+        return self._lookup(self.sigma_t, t)
 
     def r(self, t: torch.Tensor) -> torch.Tensor:
         """Noise-to-signal ratio sigma_t / alpha_t, i.e. the per-coordinate
         standard deviation of the corruption once rescaled into x0-space."""
-        return self.r_t[t.long()]
+        return self._lookup(self.r_t, t)
 
     def t_from_r(self, r: torch.Tensor) -> torch.Tensor:
         """Nearest integer timestep for a given r.  r_t is strictly increasing."""
-        idx = torch.searchsorted(self.r_t, r.contiguous().clamp(min=float(self.r_t[0])))
-        return idx.clamp(0, self.timesteps)
+        table = self.r_t
+        target = r.to(table.device).contiguous().clamp(min=float(table[0]))
+        idx = torch.searchsorted(table, target)
+        return idx.clamp(0, self.timesteps).to(r.device)
 
     def normalize_log_r(self, r: torch.Tensor) -> torch.Tensor:
         """Map r onto ~[-1, 1] for the model's conditioning input."""
         log_r = torch.log10(r.clamp_min(1e-8))
-        mid = 0.5 * (self.log10_r_max + self.log10_r_min)
-        half = 0.5 * (self.log10_r_max - self.log10_r_min)
+        mid = (0.5 * (self.log10_r_max + self.log10_r_min)).to(r.device)
+        half = (0.5 * (self.log10_r_max - self.log10_r_min)).to(r.device)
         return (log_r - mid) / half.clamp_min(1e-8)
 
     # -- sanity -------------------------------------------------------------

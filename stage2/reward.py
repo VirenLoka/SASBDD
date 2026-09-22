@@ -84,6 +84,10 @@ class FrozenSASurrogate(nn.Module):
         self.surrogate = SASurrogate(checkpoint, device=device)
         self.model = self.surrogate.model          # registered -> moves with .to()
         self.model.requires_grad_(False).eval()
+        # Registered too: it is an nn.Module holding the schedule buffers, and
+        # `evaluate_sa` indexes them with CUDA timestep tensors.  `.to()` is
+        # in-place for buffers, so `self.surrogate.schedule` sees the same move.
+        self.schedule = self.surrogate.schedule
 
         self.residual_scale = float(residual_scale)
         self.residual_scale_types = (float(residual_scale_types)

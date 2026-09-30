@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import copy
 import math
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -169,16 +170,26 @@ class SAGuidedDDPM(LigandPocketDDPM):
         return super().analyze_sample(molecules, atom_types, aa_types, receptors)
 
     # -- reward weight -------------------------------------------------------
-    def reward_weight_now(self) -> float:
-        w = float(self.reward_cfg.get("weight", 0.0))
+    def reward_ramp_now(self) -> float:
+        """Warmup/delay fraction in [0, 1], independent of `reward.weight`.
+
+        This, not the weight, is what the warmup has to act on.  Once the reward
+        gets its own gradient budget, `scale_rew = rho*||g_ddpm||/||g_rew||` and
+        `||g_rew||` is proportional to the weight, so the weight cancels exactly
+        whenever the budget binds -- and it bound on 100% of steps in the last
+        run.  Ramping the weight would therefore be a silent no-op; the ramp is
+        applied to `rho` instead.
+        """
         warmup = int(self.reward_cfg.get("warmup_steps", 0))
         delay = int(self.reward_cfg.get("start_step", 0))
         if self._step_count < delay:
             return 0.0
         if warmup > 0:
-            ramp = min(1.0, (self._step_count - delay) / warmup)
-            w = w * max(0.0, ramp)
-        return w
+            return float(min(1.0, max(0.0, (self._step_count - delay) / warmup)))
+        return 1.0
+
+    def reward_weight_now(self) -> float:
+        return float(self.reward_cfg.get("weight", 0.0)) * self.reward_ramp_now()
 
     # -- the aux pass --------------------------------------------------------
     def reward_and_anchor(self, data) -> Dict[str, torch.Tensor]:
@@ -236,38 +247,77 @@ class SAGuidedDDPM(LigandPocketDDPM):
         w = self.reward_weight_now()
         lam = float(self.anchor_cfg.get("weight", 0.0)) \
             if self.ref_ddpm is not None else 0.0
-        g_aux: List[Optional[torch.Tensor]] = [None] * len(params)
+        # The reward and the anchor get SEPARATE gradients.  Summing them before
+        # the budget makes them compete for one allowance: the budget scales the
+        # sum, so a growing anchor (it grew 16x over a 50-epoch run) shrinks the
+        # reward, and -- worse -- shrinks the anchor's own restoring force
+        # exactly when drift is largest.  `sa/grad_aux` also could not tell you
+        # which of the two it was measuring.
+        g_rew: List[Optional[torch.Tensor]] = [None] * len(params)
+        g_anc: List[Optional[torch.Tensor]] = [None] * len(params)
         aux_terms: Dict[str, torch.Tensor] = {}
 
         if w > 0.0 or lam > 0.0:
             aux_terms = self.reward_and_anchor(data)
-            aux = w * aux_terms["reward_term"]
-            if lam > 0.0 and "anchor" in aux_terms:
-                aux = aux + lam * aux_terms["anchor"]
-            if aux.requires_grad:
-                g_aux = list(torch.autograd.grad(aux, params, allow_unused=True))
+            has_anchor = lam > 0.0 and "anchor" in aux_terms
+            if w > 0.0:
+                rew = w * aux_terms["reward_term"]
+                if rew.requires_grad:
+                    # Both terms hang off the same reward-pass graph, so the
+                    # first backward must retain it for the second.
+                    g_rew = list(torch.autograd.grad(
+                        rew, params, allow_unused=True,
+                        retain_graph=has_anchor))
+            if has_anchor:
+                anc = lam * aux_terms["anchor"]
+                if anc.requires_grad:
+                    g_anc = list(torch.autograd.grad(
+                        anc, params, allow_unused=True))
             info["sa/reward_term"] = aux_terms["reward_term"].detach()
             info["sa/pred"] = aux_terms["sa_pred"]
             info["sa/reward_t"] = aux_terms["reward_t"]
             if "anchor" in aux_terms:
                 info["sa/anchor"] = aux_terms["anchor"].detach()
 
-        # ---- 3. budget the aux gradient against the DDPM gradient -----------
+        # ---- 3. budget each aux gradient against the DDPM gradient ----------
         n_ddpm = _global_norm(g_ddpm, device)
-        n_aux = _global_norm(g_aux, device)
-        rho = self.reward_cfg.get("grad_budget")
-        if rho is not None and float(n_aux) > 0.0:
-            scale = float(min(1.0, float(rho) * float(n_ddpm) / float(n_aux)))
-        else:
-            scale = 1.0
+        n_rew = _global_norm(g_rew, device)
+        n_anc = _global_norm(g_anc, device)
+
+        def _budget(rho, n_aux):
+            """Cap ||g_aux|| at rho * ||g_ddpm||.  rho=None -> leave unscaled."""
+            if rho is None or float(n_aux) <= 0.0:
+                return 1.0
+            return float(min(1.0, float(rho) * float(n_ddpm) / float(n_aux)))
+
+        # Warmup acts here, on rho -- see reward_ramp_now().
+        rho_rew = self.reward_cfg.get("grad_budget")
+        if rho_rew is not None:
+            rho_rew = float(rho_rew) * self.reward_ramp_now()
+        scale_rew = _budget(rho_rew, n_rew)
+        # The anchor gets its own allowance so it no longer competes with the
+        # reward.  SET `anchor.grad_budget` -- leaving it null means unscaled, and
+        # measured norms (||g_anchor|| 8.46 vs ||g_ddpm|| 0.071) put an unscaled
+        # anchor at ~119x the DDPM gradient, which freezes the model.
+        rho_anc = self.anchor_cfg.get("grad_budget")
+        if rho_anc is None and float(n_anc) > 50.0 * float(n_ddpm):
+            warnings.warn(
+                f"anchor.grad_budget is null and ||g_anchor||/||g_ddpm|| = "
+                f"{float(n_anc)/max(float(n_ddpm), 1e-12):.0f}x. The anchor will "
+                f"dominate the update and the model will barely move. Set "
+                f"anchor.grad_budget (0.2 reproduces the pre-split behaviour).",
+                RuntimeWarning, stacklevel=2)
+        scale_anc = _budget(rho_anc, n_anc)
 
         opt.zero_grad(set_to_none=True)
-        for p, gd, ga in zip(params, g_ddpm, g_aux):
+        for p, gd, gr, ga in zip(params, g_ddpm, g_rew, g_anc):
             acc = None
             if gd is not None:
                 acc = gd.clone()
+            if gr is not None:
+                acc = gr * scale_rew if acc is None else acc.add_(gr, alpha=scale_rew)
             if ga is not None:
-                acc = ga * scale if acc is None else acc.add_(ga, alpha=scale)
+                acc = ga * scale_anc if acc is None else acc.add_(ga, alpha=scale_anc)
             p.grad = acc
 
         # ---- 4. clip, then step --------------------------------------------
@@ -277,10 +327,19 @@ class SAGuidedDDPM(LigandPocketDDPM):
 
         info["loss"] = ddpm_loss.detach()
         info["sa/grad_ddpm"] = n_ddpm
-        info["sa/grad_aux"] = n_aux
-        # The single most useful number when stage 2 misbehaves.
-        info["sa/grad_ratio"] = n_aux / n_ddpm.clamp_min(1e-12)
-        info["sa/aux_scale"] = torch.tensor(scale, device=device)
+        # Reward and anchor logged separately -- the combined `sa/grad_aux` could
+        # not distinguish "the reward is doing nothing" from "the anchor is
+        # eating the budget", which is exactly the question you need answered.
+        info["sa/grad_reward"] = n_rew
+        info["sa/grad_anchor"] = n_anc
+        inv_ddpm = 1.0 / n_ddpm.clamp_min(1e-12)
+        info["sa/grad_ratio"] = n_rew * inv_ddpm          # pre-budget, reward only
+        info["sa/anchor_ratio"] = n_anc * inv_ddpm        # pre-budget, anchor only
+        # Post-budget ratios: what actually reached the weights.
+        info["sa/grad_ratio_eff"] = n_rew * inv_ddpm * scale_rew
+        info["sa/anchor_ratio_eff"] = n_anc * inv_ddpm * scale_anc
+        info["sa/aux_scale"] = torch.tensor(scale_rew, device=device)
+        info["sa/anchor_scale"] = torch.tensor(scale_anc, device=device)
         info["sa/weight"] = torch.tensor(w, device=device)
         info["sa/grad_total"] = grad_norm
         self._last_diag = {k: float(v) for k, v in info.items()

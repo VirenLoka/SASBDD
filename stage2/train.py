@@ -280,11 +280,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     save_config(cfg, outdir / "config.resolved.yaml")
 
     tr = cfg.trainer
+    # `loss/val` is a variance-dominated NLL estimate (measured: std 11.9 over a
+    # range of -29..+29 with no trend across 50 epochs), so selecting on it picks
+    # the luckiest draws rather than the best model.  `error_t_lig/val` tracks the
+    # same thing with ~13x less noise (std 0.88).  Override with
+    # `trainer.monitor` if you want to select on something else.
+    monitor = str(tr.get("monitor", "error_t_lig/val"))
     callbacks = [pl.callbacks.ModelCheckpoint(
         dirpath=str(outdir / "checkpoints"),
         filename="best-model-epoch={epoch:02d}",
-        monitor="loss/val", save_top_k=int(tr.get("save_top_k", 3)),
+        monitor=monitor, save_top_k=int(tr.get("save_top_k", 3)),
         save_last=True, mode="min")]
+
+    # Keep a periodic snapshot as well: the metric you actually care about
+    # (sa_true) is only computed every `reward.eval_sa_epochs`, so post-hoc
+    # selection on it needs checkpoints that were not chosen by `monitor`.
+    every_n = int(tr.get("save_every_n_epochs", 0) or 0)
+    if every_n > 0:
+        callbacks.append(pl.callbacks.ModelCheckpoint(
+            dirpath=str(outdir / "checkpoints"),
+            filename="epoch={epoch:02d}",
+            every_n_epochs=every_n, save_top_k=-1, save_on_train_epoch_end=True))
 
     devices = tr.get("devices", 1)
     trainer = pl.Trainer(

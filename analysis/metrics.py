@@ -88,7 +88,12 @@ class BasicMolecularMetrics(object):
 
     def compute_uniqueness(self, connected):
         """ valid: list of SMILES strings."""
-        if len(connected) < 1 or self.dataset_smiles_list is None:
+        # Uniqueness is intrinsic to the sample -- it needs no reference set.
+        # The `dataset_smiles_list is None` guard belongs in compute_novelty
+        # only; having it here silently reported 0.0 uniqueness (and, via the
+        # empty `unique` list it returned, 0.0 novelty) for every run launched
+        # with `eval_params.smiles_file: null`.
+        if len(connected) < 1:
             return [], 0.0
 
         return list(set(connected)), len(set(connected)) / len(connected)
@@ -96,6 +101,10 @@ class BasicMolecularMetrics(object):
     def compute_novelty(self, unique):
         if len(unique) < 1:
             return [], 0.0
+        if self.dataset_smiles_list is None:
+            # No reference set -> novelty is unknown, not zero.  NaN keeps it
+            # visibly absent from the logs instead of looking like 0% novel.
+            return [], float('nan')
 
         num_novel = 0
         novel = []
